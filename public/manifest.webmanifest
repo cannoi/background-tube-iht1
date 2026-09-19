@@ -1,0 +1,9 @@
+{
+  "name": "Background Heart Tube",
+  "short_name": "BG Tube",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#120e16",
+  "theme_color": "#d4536a",
+  "description": "Mobile music discovery using official YouTube APIs and IFrame playback."
+}

@@ -1,0 +1,12 @@
+options:
+  - name: YOUTUBE_API_KEY
+    label: YouTube API Key
+    description: "Nhập API Key từ Google Cloud Console (YouTube Data API v3)."
+    type: string
+    required: true
+    secret: true
+  - name: YOUTUBE_REGION
+    label: YouTube Region
+    description: "Mã quốc gia để tối ưu hóa kết quả tìm kiếm (ví dụ: VN, US)."
+    type: string
+    default: "VN"

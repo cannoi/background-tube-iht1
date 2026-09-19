@@ -1,0 +1,15 @@
+title: "Background Tube"
+eyebrow: SoloHost App
+description: "Lightweight mobile music app using official YouTube Data API v3 and IFrame playback."
+footer_hint: Ready to run on Pi Desktop SoloHost.
+output_file: .env
+after_save: Saved. Start the app from SoloHost.
+fields:
+  - name: YOUTUBE_API_KEY
+    label: YouTube Data API v3 key
+    type: password
+    required: false
+  - name: YOUTUBE_REGION
+    label: Popular chart region
+    type: text
+    required: false

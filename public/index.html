@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#120e16">
+  <meta name="description" content="Background Heart Tube — lightweight YouTube music discovery using official APIs only.">
+  <title>Background ❤️ Tube</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="/css/app.css">
+<style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo"><i class="fa-solid fa-play"></i></div>
+        <div>
+          <h1>Background ❤️ Tube</h1>
+          <p>Official YouTube search & embed</p>
+        </div>
+      </div>
+      <button class="icon-btn" data-tab="settings" aria-label="Settings"><i class="fa-solid fa-sliders"></i></button>
+    </header>
+
+    <main id="mainContainer" class="viewport"></main>
+  </div>
+
+  <div id="miniPlayerBar" class="mini">
+    <div class="mini-seek"><span id="miniSeekFill"></span></div>
+    <div class="mini-inner">
+      <div class="thumb" data-action="open-player"><img id="miniThumbnail" alt=""></div>
+      <button class="ghost" data-action="open-player" style="text-align:left">
+        <strong id="miniTitle">Select a track</strong>
+        <div class="muted" id="miniChannel">YouTube</div>
+      </button>
+      <div>
+        <button class="play-mini" id="miniPlayPauseBtn" data-action="toggle" aria-label="Play or pause"><i class="fa-solid fa-play"></i></button>
+        <button class="ghost" data-action="stop" aria-label="Stop"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <button class="nav-btn active" data-tab="home"><i class="fa-solid fa-house"></i>Home</button>
+    <button class="nav-btn" data-tab="search"><i class="fa-solid fa-magnifying-glass"></i>Search</button>
+    <button class="nav-btn" data-tab="library"><i class="fa-solid fa-heart"></i>Library</button>
+    <button class="nav-btn" data-tab="settings"><i class="fa-solid fa-gear"></i>Settings</button>
+  </nav>
+
+  <div id="playerOverlay" class="overlay"></div>
+  <div id="sheetBack" class="modal-back"></div>
+  <div id="toast" class="toast"></div>
+  
+
+  <script type="module" src="/js/main.js"></script>
+<img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
+</html>
