@@ -7,10 +7,6 @@ const { URL } = require('url');
 
 const PORT = Number(process.env.PORT || 3000);
 const REGION = (process.env.YOUTUBE_REGION || 'US').trim() || 'US';
-
-// Dán key vào đây, giữa hai dấu nháy
-const HARDCODED_YOUTUBE_API_KEY = 'AIzaSyAyeT2ltDvZeB89QFmllXNMq0ukvDi4kuI';
-
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const CACHE_TTL_MS = 4 * 60 * 1000;
 const cache = new Map();
@@ -30,11 +26,8 @@ const MIME = {
 };
 
 function getApiKey() {
-  const fromEnv = (process.env.YOUTUBE_API_KEY || '').trim();
-  const fromFile = (HARDCODED_YOUTUBE_API_KEY || '').trim();
-  const key = fromEnv || fromFile;
-  if (!key || key === 'your_youtube_api_key_here' || key === 'PASTE_API_KEY_HERE') return '';
-  return key;
+  const key = process.env.YOUTUBE_API_KEY;
+  return key && key.trim() && key !== 'your_youtube_api_key_here' ? key.trim() : '';
 }
 
 function cacheGet(key) {
@@ -219,7 +212,7 @@ async function handleSearch(url, res) {
     sendJson(res, 400, { error: 'Query required', code: 'bad_request', message: 'Enter a song, artist, or keyword.' });
     return;
   }
-  const cacheKey = `search:\( {query}: \){pageToken}:${maxResults}`;
+  const cacheKey = `search:${query}:${pageToken}:${maxResults}`;
   const cached = cacheGet(cacheKey);
   if (cached) return sendJson(res, 200, cached);
   try {
