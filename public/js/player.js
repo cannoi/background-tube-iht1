@@ -22,6 +22,26 @@ let ytPlayer = null;
 let progressTimer = null;
 let pendingVideoId = null;
 let createAttempted = false;
+let recordedTrackId = null;
+let lastRecordedAt = 0;
+
+function recordListeningEvent(item, opts = {}) {
+  if (!item || !item.videoId) return;
+  try {
+    fetch('/api/music/preferences/record', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ item, completed: !!opts.completed, skipped: !!opts.skipped })
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+function markCurrentOutcome(skipped = false, completed = false) {
+  if (!state.active || !recordedTrackId || recordedTrackId !== state.active.videoId) return;
+  const now = Date.now();
+  if (now - lastRecordedAt < 1200) return;
+  lastRecordedAt = now;
+  recordListeningEvent(state.active, { skipped, completed });
+}
 
 function emit() {
   listeners.forEach((fn) => {
@@ -120,6 +140,7 @@ function onYtState(event) {
     setState({ playing: false });
     updateMediaSession();
   } else if (event.data === YT.PlayerState.ENDED) {
+    markCurrentOutcome(false, true);
     setState({ playing: false });
     handleEnded();
   } else if (event.data === YT.PlayerState.BUFFERING) {
@@ -220,11 +241,19 @@ function playAt(index, force) {
     return;
   }
   const video = state.queue[index];
+  if (state.active && state.active.videoId !== video.videoId) {
+    const dur = state.duration || 0;
+    const ratio = dur > 0 ? (state.currentTime / dur) : 0;
+    markCurrentOutcome(ratio < 0.80 && state.currentTime > 8, false);
+  }
   state.index = index;
   state.active = video;
   state.error = null;
   state.currentTime = 0;
   addToHistory(video);
+  recordedTrackId = video.videoId;
+  lastRecordedAt = 0;
+  recordListeningEvent(video, { completed: false, skipped: false });
   saveQueue(state.queue, index);
   pendingVideoId = video.videoId;
   createOrLoad(video.videoId);
@@ -285,6 +314,11 @@ export function seekToRatio(ratio) {
 }
 
 export function stopPlayback() {
+  if (state.active) {
+    const dur = state.duration || 0;
+    const ratio = dur > 0 ? (state.currentTime / dur) : 0;
+    markCurrentOutcome(ratio < 0.80 && state.currentTime > 8, false);
+  }
   if (ytPlayer && typeof ytPlayer.stopVideo === 'function') ytPlayer.stopVideo();
   stopProgress();
   setState({ playing: false, active: null, currentTime: 0 });

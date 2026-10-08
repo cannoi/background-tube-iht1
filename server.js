@@ -39,7 +39,7 @@ const ai = createAIService({ dataDir: DATA_DIR, appName: 'Background Tube', adap
 const fbOpts = {
   appId: 'background-tube',
   appName: 'Background Tube',
-  version: '1.4.3',
+  version: '1.4.4',
   hubId: 'SHFH-CANNOI-0905428801',
   baseUrl: 'http://14.176.78.46:8090',
   ingestToken: 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
@@ -373,6 +373,7 @@ async function handlePopular(url, res) {
     const items = (data.items || []).map(mapVideoItem).filter((i) => i.videoId);
     const payload = { items, regionCode };
     cacheSet(cacheKey, payload);
+    musicEngine.trendCacheSet(cacheKey, payload);
     sendJson(res, 200, payload);
   } catch (err) {
     const mapped = err.mapped || { status: 500, code: 'network_error', message: 'Failed to load popular music.' };
@@ -629,6 +630,13 @@ async function handleMusicAI(body, res) {
   const hasAiCandidates = !!(rIntent.candidates && rIntent.candidates.length);
 
   let candidates = hasAiCandidates ? rIntent.candidates : musicEngine.seedCandidates(rIntent);
+  if (rIntent.intent === 'recommendation') {
+    // Recommendation pool is built from learned taste + cached local/global trends first.
+    // AI candidates are additive, not the source of truth.
+    const region = rIntent.region || process.env.REGION || 'VN';
+    const cachedPool = musicEngine.recommendationPool({ region, limit: 8 });
+    candidates = [...cachedPool, ...candidates];
+  }
   if (rIntent.intent === 'music_search' && rIntent.query && !(isPlaylist && hasAiCandidates)) {
     candidates = [{ artist: '', title: rIntent.query, query: rIntent.query }, ...candidates];
   }
@@ -643,9 +651,19 @@ async function handleMusicAI(body, res) {
 
   let items = [];
   try {
+    const isRecommendation = rIntent.intent === 'recommendation';
+    const maxCandidates = isRecommendation ? Math.min(12, Math.max(6, (rIntent.limit || 8) + 4)) : (rIntent.limit || 8);
+    let searchFallbacks = 0;
     items = await musicEngine.resolveCandidates(
-      candidates.slice(0, rIntent.limit || 8),
-      async (q, n) => { usedSearchApi = true; return ytSearchMinimal(q, n); },
+      candidates.slice(0, maxCandidates),
+      async (q, n) => {
+        // Recommendations get only a small number of targeted Search API fallbacks.
+        // Cache/history/trends should satisfy the rest.
+        if (isRecommendation && searchFallbacks >= 3) return { items: [] };
+        searchFallbacks += 1;
+        usedSearchApi = true;
+        return ytSearchMinimal(q, n);
+      },
       { limit: rIntent.limit || 8, history }
     );
   } catch (e) {
@@ -700,10 +718,12 @@ async function handleMusicAI(body, res) {
   const autoPlay = rIntent.autoPlay !== false && !rIntent.queueOnly;
   const reply = aiReply
     || (items.length
-      ? (autoPlay
-          ? ('▶ ' + (items[0].title || 'Track') + (items.length > 1 ? ' · +' + (items.length - 1) + ' in queue' : ''))
-          : ('Found ' + items.length + ' track(s).'))
-      : 'No playable tracks. Add a YouTube API key in server env or try Search tab.');
+      ? (rIntent.intent === 'recommendation'
+          ? (autoPlay ? ('▶ ' + (items[0].title || 'Track') + (items.length > 1 ? ' · +' + (items.length - 1) + ' in queue' : '') + ' · preference → local trends → global trends') : ('Found ' + items.length + ' recommended track(s).'))
+          : (autoPlay
+            ? ('▶ ' + (items[0].title || 'Track') + (items.length > 1 ? ' · +' + (items.length - 1) + ' in queue' : ''))
+            : ('Found ' + items.length + ' track(s).')))
+      : 'No playable tracks. You can still use local player controls, Library, and cached recommendations; add a YouTube API key for fresh discovery.');
 
   sendJson(res, 200, {
     ok: true,
@@ -734,7 +754,7 @@ async function handleRequest(req, res) {
   }
 
   if (url.pathname === '/health' && req.method === 'GET') {
-    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.4.3', timestamp: new Date().toISOString() });
+    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.4.4', timestamp: new Date().toISOString() });
   }
 
   if (url.pathname === '/api/config-status' && req.method === 'GET') {
@@ -816,11 +836,28 @@ async function handleRequest(req, res) {
   if (url.pathname === '/api/music/recommendations' && req.method === 'GET') {
     const mood = String(url.searchParams.get('mood') || 'general');
     const language = String(url.searchParams.get('language') || '');
-    const intent = { intent: 'recommendation', mood, language, region: language === 'vi' ? 'VN' : undefined, limit: 8 };
-    const seeds = musicEngine.seedCandidates(intent);
-    let items = [];
-    try { items = await musicEngine.resolveCandidates(seeds, getApiKey() ? ytSearchMinimal : null, { limit: 8 }); } catch (_) {}
-    return sendJson(res, 200, { ok: true, items, preferences: musicEngine.getPreferences() });
+    const region = String(url.searchParams.get('region') || (language === 'vi' ? 'VN' : REGION)).slice(0, 2).toUpperCase();
+    const limit = Math.min(16, Math.max(4, Number(url.searchParams.get('limit') || 10)));
+    const localKey = 'popular:' + region;
+    let local = musicEngine.trendCacheGet(localKey);
+    if (!local) {
+      // One cheap regional trends request, cached for reuse. Never Search API here.
+      try {
+        const data = await ytGet('videos', { part: 'snippet,contentDetails,statistics,status', chart: 'mostPopular', videoCategoryId: '10', maxResults: 12, regionCode: region }, getApiKey());
+        local = { items: (data.items || []).map(mapVideoItem), regionCode: region };
+        musicEngine.trendCacheSet(localKey, local);
+        cacheSet(localKey, local);
+      } catch (_) { local = { items: [] }; }
+    }
+    let pool = musicEngine.recommendationPool({ region, limit });
+    if (!pool.length) {
+      // AI-less cold start: known offline seeds are resolved only when necessary.
+      const seeds = musicEngine.seedCandidates({ intent: 'recommendation', mood, language, region, limit });
+      try { pool = await musicEngine.resolveCandidates(seeds, getApiKey() ? ytSearchMinimal : null, { limit }); } catch (_) { pool = []; }
+    }
+    const items = musicEngine.rankWithTrends(pool, { mood, region, personalWeight: 0.60, localWeight: 0.25, globalWeight: 0.15 }).slice(0, limit);
+    const prefs = musicEngine.getPreferences();
+    return sendJson(res, 200, { ok: true, items, preferences: { weights: prefs.weights, languages: prefs.languages, genres: prefs.genres, artists: prefs.artists, updatedAt: prefs.updatedAt }, priority: ['personal', 'local', 'global'], region });
   }
   if (url.pathname === '/api/music/trending/local' && req.method === 'GET') {
     url.searchParams.set('regionCode', url.searchParams.get('region') || REGION);
@@ -848,7 +885,7 @@ async function handleRequest(req, res) {
     try {
       const body = await readBody(req);
       musicEngine.recordPlay(body.item, { completed: body.completed, skipped: body.skipped });
-      return sendJson(res, 200, { ok: true });
+      return sendJson(res, 200, { ok: true, preferences: musicEngine.getPreferences() });
     } catch (e) { return sendJson(res, 400, { ok: false, error: e.message }); }
   }
 
@@ -1021,7 +1058,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.4.3 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.4.4 running on 0.0.0.0:' + PORT);
   });
 }
 

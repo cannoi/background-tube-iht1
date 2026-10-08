@@ -76,18 +76,20 @@ function gameContext() {
       repeat = p.repeat || 'off';
     }
   } catch (e) {}
-  let queuePreview = [], playlists = [];
+  let queuePreview = [], playlists = [], favorite = false, librarySignals = {};
   try {
     if (window.btAI && window.btAI.snapshot) {
       const snap = window.btAI.snapshot();
       queuePreview = snap.queue || [];
       playlists = snap.playlists || [];
+      favorite = !!snap.favorite;
+      librarySignals = snap.librarySignals || {};
     }
   } catch (e) {}
   return {
     screen: tab ? tab.dataset.tab : 'home',
-    playing, title, channel, videoId, queueLength, index, shuffle, repeat,
-    queuePreview, playlists
+    playing, title, channel, videoId, queueLength, index, shuffle, repeat, favorite,
+    queuePreview, playlists, librarySignals
   };
 }
 /** Every action the player/library side (main.js → runAiAction) understands. */

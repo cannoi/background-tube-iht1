@@ -1,5 +1,5 @@
 import { escapeHtml, formatIsoDuration, formatPublished, formatViews, formatSeconds } from './format.js';
-import { searchVideos, getPopular, getConfigStatus } from './api.js';
+import { searchVideos, getPopular, getConfigStatus, getRecommendations } from './api.js';
 import {
   getHistory, clearHistory, getFavorites, isFavorite, toggleFavorite,
   getPlaylists, createPlaylist, renamePlaylist, deletePlaylist,
@@ -10,7 +10,7 @@ import { getSettings, updateSettings } from './settings.js';
 import { setTheme } from './theme.js';
 import {
   getPlayerState, playVideo, togglePlayPause, next, previous, cycleRepeat,
-  toggleShuffle, stopPlayback
+  toggleShuffle, stopPlayback, removeFromQueue, clearQueue
 } from './player.js';
 
 const DISCOVER = [
@@ -33,6 +33,8 @@ const view = {
   searchMode: 'ai', // 'ai' | 'yt' — default AI search
   popular: [],
   popularError: null,
+  recommendations: [],
+  recommendationsError: null,
   config: null,
   toastTimer: null,
   addTarget: null,
@@ -96,6 +98,22 @@ export function renderHome() {
         <div class="section-head"><h3>Continue listening</h3></div>
         ${trackCard(continueItem)}
       </section>` : ''}
+
+    <section class="section">
+      <div class="section-head"><h3>For You</h3><button class="linkish" data-action="reload-recommendations">Refresh</button></div>
+      ${view.recommendationsError ? errorState(view.recommendationsError, 'Retry', 'reload-recommendations') : ''}
+      ${!view.recommendationsError && !view.recommendations.length ? emptyState('fa-wand-magic-sparkles', 'Build your taste', 'Play a few tracks. Recommendations learn from your listening, then use local and global trends.') : ''}
+      <div class="h-scroll card-row">
+        ${view.recommendations.map((item) => `
+          <button class="discover-card" data-play="${escapeHtml(item.videoId)}" type="button">
+            <img loading="lazy" src="${escapeHtml(item.thumbnail || '')}" alt="">
+            <div>
+              <strong>${escapeHtml(item.title)}</strong>
+              <div class="muted">${escapeHtml(item.channelTitle)}${item._recommendationSource ? ' · ' + escapeHtml(item._recommendationSource) : ''}</div>
+            </div>
+          </button>`).join('')}
+      </div>
+    </section>
 
     <section class="section">
       <div class="section-head"><h3>Discover</h3><button class="linkish" data-action="reload-popular">Refresh</button></div>
@@ -368,7 +386,7 @@ function ensurePlayerOverlay() {
       <div id="playerError" class="error-box" style="margin-top:12px" hidden></div>
       <div class="limit-note">Background playback is not available through the official YouTube embed on most phones. Audio continues only while this page stays open. Lock-screen controls appear only if the browser allows Media Session.</div>
       <div class="queue">
-        <div class="section-head"><h3>Queue</h3><span class="muted" id="queueCount">0 tracks</span></div>
+        <div class="section-head"><h3>Queue</h3><div><span class="muted" id="queueCount">0 tracks</span> <button class="linkish" data-action="clear-player-queue">Clear</button></div></div>
         <div id="queueList"></div>
       </div>
     </div>`;
@@ -404,11 +422,14 @@ function updatePlayerChrome() {
   const list = document.getElementById('queueList');
   if (list) {
     list.innerHTML = p.queue.map((item, idx) => `
-      <button class="track" data-play="${escapeHtml(item.videoId)}" type="button" style="${idx === p.index ? 'box-shadow:0 0 0 1px var(--brand)' : ''}">
-        <div class="thumb"><img loading="lazy" src="${escapeHtml(item.thumbnail || '')}" alt=""></div>
-        <div><strong>${escapeHtml(item.title)}</strong><div class="muted">${escapeHtml(item.channelTitle)}</div></div>
+      <div class="track" style="${idx === p.index ? 'box-shadow:0 0 0 1px var(--brand)' : ''}">
+        <button class="ghost" data-play="${escapeHtml(item.videoId)}" type="button" style="flex:1;text-align:left">
+          <div class="thumb"><img loading="lazy" src="${escapeHtml(item.thumbnail || '')}" alt=""></div>
+          <div><strong>${escapeHtml(item.title)}</strong><div class="muted">${escapeHtml(item.channelTitle)}</div></div>
+        </button>
         <span class="muted">${idx === p.index ? 'Now' : String(idx + 1).padStart(2, '0')}</span>
-      </button>`).join('');
+        <button type="button" class="ghost" data-queue-remove="${idx}" aria-label="Remove from queue">×</button>
+      </div>`).join('');
   }
   const dur = document.getElementById('seekDurationLabel');
   if (dur && video) dur.textContent = video.duration ? formatIsoDuration(video.duration) : formatSeconds(p.duration);
@@ -540,6 +561,18 @@ async function runSearch(loadMore = false) {
 }
 
 
+async function loadRecommendations() {
+  try {
+    const data = await getRecommendations({ limit: 10 });
+    view.recommendations = data.items || [];
+    view.recommendationsError = null;
+  } catch (err) {
+    view.recommendationsError = err.message || 'Could not load recommendations.';
+    view.recommendations = [];
+  }
+  if (view.tab === 'home') render();
+}
+
 async function loadPopular() {
   try {
     const data = await getPopular();
@@ -591,7 +624,7 @@ async function shareActive() {
 }
 
 function onClick(event) {
-  const t = event.target.closest('[data-tab],[data-play],[data-quick],[data-action],[data-theme],[data-lib-filter],[data-play-list],[data-rename-list],[data-delete-list],[data-add-to],[data-move],[data-remove-item],[data-go]');
+  const t = event.target.closest('[data-tab],[data-play],[data-quick],[data-action],[data-theme],[data-lib-filter],[data-play-list],[data-rename-list],[data-delete-list],[data-add-to],[data-move],[data-remove-item],[data-queue-remove],[data-go]');
   if (!t) return;
 
   if (t.dataset.tab) setTab(t.dataset.tab);
@@ -647,6 +680,10 @@ function onClick(event) {
     removeFromPlaylist(t.dataset.fromList, t.dataset.removeItem);
     render();
   }
+  if (t.dataset.queueRemove != null) {
+    removeFromQueue(Number(t.dataset.queueRemove));
+    if (view.playerOpen) openPlayer();
+  }
 
   switch (t.dataset.action) {
     case 'search-mode-ai':
@@ -669,6 +706,13 @@ function onClick(event) {
       break;
     case 'reload-popular':
       loadPopular();
+      break;
+    case 'reload-recommendations':
+      loadRecommendations();
+      break;
+    case 'clear-player-queue':
+      clearQueue();
+      if (view.playerOpen) openPlayer();
       break;
     case 'clear-history':
       clearHistory();
@@ -776,6 +820,7 @@ export async function initUi() {
   });
   setTab(view.tab === 'player' ? 'home' : view.tab);
   loadConfig();
+  loadRecommendations();
   loadPopular();
 }
 

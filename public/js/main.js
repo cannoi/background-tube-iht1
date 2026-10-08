@@ -100,7 +100,14 @@ window.btAI = {
       queue: (p.queue || []).slice(0, 15).map((q) => q.title),
       queueLength: (p.queue || []).length,
       playlists: getPlaylists().map((pl) => ({ name: pl.name, count: pl.items.length })),
-      favorite: p.active ? isFavorite(p.active.videoId) : false
+      favorite: p.active ? isFavorite(p.active.videoId) : false,
+      librarySignals: {
+        historyCount: getHistory().length,
+        favoriteCount: getFavorites().length,
+        playlistCount: getPlaylists().length,
+        topArtists: getHistory().slice(0, 12).map((x) => x.channelTitle).filter(Boolean).slice(0, 5),
+        topTitles: getHistory().slice(0, 8).map((x) => x.title).filter(Boolean).slice(0, 5)
+      }
     };
   },
   run: (name, args, items) => runAiAction(name, args || {}, items),

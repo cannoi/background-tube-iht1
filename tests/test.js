@@ -74,6 +74,9 @@ async function run() {
   const adapter = require('../lib/app-adapter');
   const lr = await adapter.localReply('help', {});
   assert.ok(lr && lr.length > 10);
+  const knowledge = await adapter.knowledge({ screen: 'home' });
+  assert.ok(knowledge.includes('Personal preference → Local trends → Global trends'));
+  assert.ok(knowledge.includes('Knowledge revision: 1.4.4'));
 
   const server = await new Promise((resolve) => {
     const srv = createServer().listen(0, '127.0.0.1', () => resolve(srv));
@@ -126,6 +129,11 @@ async function run() {
     assert.strictEqual(mai2.status, 200);
     assert.ok(mai2.json.intent);
 
+    const recApi = await request(server, '/api/music/recommendations?region=VN&limit=6');
+    assert.strictEqual(recApi.status, 200);
+    assert.ok(Array.isArray(recApi.json.items));
+    assert.deepStrictEqual(recApi.json.priority, ['personal', 'local', 'global']);
+
     // Session API
     const sess = await request(server, '/api/session', 'POST', {});
     assert.strictEqual(sess.status, 200);
@@ -171,6 +179,9 @@ async function run() {
     { videoId: 'b', title: 'z', channelTitle: 'w' }
   ], { mood: 'relax' });
   assert.ok(Array.isArray(ranked));
+  assert.ok(typeof music.recommendationPool === 'function');
+  music.recordPlay({ videoId: 'bt-test-pref', title: 'Test Preference', channelTitle: 'Test Artist', language: 'en' });
+  assert.ok(music.getPreferences().recentTracks.some((x) => x.videoId === 'bt-test-pref'));
 
   // Preference weights order documented
   const pref = music.getPreferences();
