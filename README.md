@@ -21,6 +21,13 @@ Home · Search · Library · Settings, plus a full player overlay and a persiste
 
 Official IFrame embeds do **not** keep playing after most mobile browsers suspend the tab. This app does not work around that restriction. Settings and the player explain the limit. Media Session metadata is published so lock-screen controls can appear *while the page is still active* and the browser allows it.
 
+## AI panel — song requests & playlists (v1.4.0)
+
+- Nothing playing → a requested song plays immediately.
+- Music already playing → big **Play now** / **Add to queue** buttons; no choice in 15 s = added after the last track.
+- The AI can create and manage local playlists (create, fill, add, play, rename, delete with confirmation, list)
+  and control playback, queue and favorites. Playlists stay in the browser's local storage.
+
 ## Architecture
 
 ```

@@ -357,9 +357,60 @@ export function addToQueue(items, { playNext = false } = {}) {
       if (!state.queue.some((q) => q.videoId === item.videoId)) state.queue.push(item);
     });
   }
-  if (state.queue.length > 100) state.queue = state.queue.slice(-100);
+  if (state.queue.length > 100) {
+    // Keep the playing index pointing at the same track after trimming the head.
+    const drop = state.queue.length - 100;
+    state.queue = state.queue.slice(drop);
+    if (state.index >= 0) state.index = Math.max(0, state.index - drop);
+  }
   saveQueue(state.queue, state.index);
-  setState({ queue: state.queue });
+  setState({ queue: state.queue, index: state.index });
+}
+
+/** Append tracks after the LAST track of the queue (no replace, no interrupt). Returns number added. */
+export function appendToQueue(items) {
+  const list = (Array.isArray(items) ? items : [items]).filter((i) => i && i.videoId);
+  const before = state.queue.length;
+  addToQueue(list);
+  return Math.max(0, state.queue.length - before);
+}
+
+/**
+ * Play tracks NOW without destroying the existing queue:
+ * the new tracks are inserted right after the current one and the first starts immediately.
+ */
+export function insertAndPlay(items) {
+  const list = (Array.isArray(items) ? items : [items]).filter((i) => i && i.videoId);
+  if (!list.length) return false;
+  const ids = new Set(list.map((i) => i.videoId));
+  const current = state.active && state.index >= 0 ? state.queue[state.index] : null;
+  // Drop older copies of the incoming tracks (except the one currently playing) to avoid duplicates.
+  let kept = state.queue.filter((q, i) => !(ids.has(q.videoId) && !(current && i === state.index)));
+  let at = current ? kept.findIndex((q) => q === current) : -1;
+  const insertAt = at >= 0 ? at + 1 : kept.length;
+  const fresh = list.filter((i) => !(current && i.videoId === current.videoId));
+  kept.splice(insertAt, 0, ...fresh);
+  state.queue = kept;
+  const target = current && list[0].videoId === current.videoId ? at : insertAt;
+  saveQueue(state.queue, target);
+  playAt(Math.max(0, target), true);
+  return true;
+}
+
+/** Jump to the N-th queue entry (0-based). */
+export function playIndex(index) {
+  const i = Number(index);
+  if (Number.isNaN(i) || i < 0 || i >= state.queue.length) return false;
+  playAt(i, true);
+  return true;
+}
+
+/** True when music is really being listened to (playing, or paused mid-track). Idle after stop / end of queue. */
+export function isMusicBusy() {
+  if (!state.active) return false;
+  if (state.playing) return true;
+  const remaining = (state.duration || 0) - (state.currentTime || 0);
+  return state.currentTime > 1 && !(state.duration > 0 && remaining < 2);
 }
 
 export function removeFromQueue(index) {

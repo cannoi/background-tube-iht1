@@ -189,6 +189,109 @@ async function run() {
   const stopCmd = await request(server, '/api/music/ai', 'POST', { message: 'stop' });
   assert.strictEqual(stopCmd.json.intent.action, 'stop');
 
+  // ——— v1.4.0: AI song request choice / playlists / queue commands ———
+  // Parser: playlist commands (VI + EN)
+  const pc1 = music.localIntentParse('tạo playlist Chill Tối gồm 10 bài nhạc Việt chill');
+  assert.strictEqual(pc1.intent, 'playlist_operation');
+  assert.strictEqual(pc1.action, 'playlist_create');
+  assert.strictEqual(pc1.playlistName, 'Chill Tối');
+  assert.strictEqual(pc1.limit, 10);
+  assert.strictEqual(pc1.language, 'vi');
+  const pc2 = music.localIntentParse('create playlist Study with lofi beats');
+  assert.strictEqual(pc2.action, 'playlist_create');
+  assert.strictEqual(pc2.playlistName, 'Study');
+  assert.strictEqual(pc2.query, 'lofi beats');
+  assert.strictEqual(music.localIntentParse('Tạo danh sách phát Gym').playlistName, 'Gym');
+  assert.strictEqual(music.localIntentParse('tạo playlist từ hàng đợi tên Đi làm').fromQueue, true);
+  const pc3 = music.localIntentParse('thêm bài này vào playlist Gym');
+  assert.strictEqual(pc3.action, 'playlist_add');
+  assert.strictEqual(pc3.current, true);
+  assert.strictEqual(music.localIntentParse('add Lạc Trôi to playlist Gym').query, 'Lạc Trôi');
+  assert.strictEqual(music.localIntentParse('phát playlist Gym').action, 'playlist_play');
+  assert.strictEqual(music.localIntentParse('xóa playlist Gym').action, 'playlist_delete');
+  const pc4 = music.localIntentParse('đổi tên playlist Gym thành Tập gym');
+  assert.strictEqual(pc4.action, 'playlist_rename');
+  assert.strictEqual(pc4.newName, 'Tập gym');
+  assert.strictEqual(music.localIntentParse('liệt kê playlist').action, 'playlist_list');
+  // Parser: queue / favorite commands
+  assert.strictEqual(music.localIntentParse('phát bài số 3').action, 'play_index');
+  assert.strictEqual(music.localIntentParse('phát bài số 3').value, 3);
+  assert.strictEqual(music.localIntentParse('xóa bài số 2').action, 'queue_remove');
+  assert.strictEqual(music.localIntentParse('thích bài này').action, 'favorite');
+  const pn = music.localIntentParse('play next Shape of You');
+  assert.strictEqual(pn.playNext, true);
+  assert.strictEqual(pn.queueOnly, true);
+  const aq = music.localIntentParse('thêm Lạc Trôi vào danh sách phát');
+  assert.strictEqual(aq.queueOnly, true);
+  assert.strictEqual(aq.query, 'Lạc Trôi');
+  // Old behaviour must be untouched
+  assert.strictEqual(music.localIntentParse('play Sơn Tùng').intent, 'music_search');
+  assert.strictEqual(music.localIntentParse('play Sơn Tùng').autoPlay, true);
+  assert.strictEqual(music.localIntentParse('danh sách phát').action, 'queue_status');
+  // parseIntent: omitted autoPlay stays undefined (never overrides local default), unknown keys dropped
+  const pi = music.parseIntent('{"intent":"music_search","query":"abc"}');
+  assert.strictEqual(pi.autoPlay, undefined);
+  assert.ok(!('action' in pi));
+  assert.strictEqual(music.parseIntent('{"intent":"playlist_operation","action":"playlist_create","playlistName":"X"}').playlistName, 'X');
+
+  // Server: playlist ops return client actions, never auto-play `items`
+  const plList = await request(server, '/api/music/ai', 'POST', { message: 'liệt kê playlist' });
+  assert.strictEqual(plList.status, 200);
+  assert.strictEqual(plList.json.actions[0].name, 'playlist_list');
+  assert.strictEqual(plList.json.actions[0].args.lang, 'vi');
+  assert.deepStrictEqual(plList.json.items, []);
+  const plDel = await request(server, '/api/music/ai', 'POST', { message: 'delete playlist Gym' });
+  assert.strictEqual(plDel.json.actions[0].name, 'playlist_delete');
+  assert.strictEqual(plDel.json.actions[0].args.name, 'Gym');
+  assert.strictEqual(plDel.json.actions[0].args.lang, 'en');
+  const plEmpty = await request(server, '/api/music/ai', 'POST', { message: 'tạo playlist Gym' });
+  assert.strictEqual(plEmpty.json.actions[0].name, 'playlist_create');
+  assert.strictEqual(plEmpty.json.actions[0].args.name, 'Gym');
+  const plQ = await request(server, '/api/music/ai', 'POST', { message: 'create playlist Mix from queue' });
+  assert.strictEqual(plQ.json.actions[0].args.fromQueue, true);
+  const plCur = await request(server, '/api/music/ai', 'POST', { message: 'thêm bài này vào playlist Gym' });
+  assert.strictEqual(plCur.json.actions[0].name, 'playlist_add');
+  assert.strictEqual(plCur.json.actions[0].args.current, true);
+  // With content but no YouTube key / cache: still a playlist action (empty) + clear warning, no crash
+  const plFill = await request(server, '/api/music/ai', 'POST', { message: 'create playlist Focus with 5 lofi songs' });
+  assert.strictEqual(plFill.status, 200);
+  assert.strictEqual(plFill.json.actions[0].name, 'playlist_create');
+  assert.deepStrictEqual(plFill.json.items, []);
+  assert.ok(Array.isArray(plFill.json.actions[0].args.items));
+  const plAddMiss = await request(server, '/api/music/ai', 'POST', { message: 'add zzqxv unknown song to playlist Gym' });
+  assert.strictEqual(plAddMiss.status, 200);
+  assert.deepStrictEqual(plAddMiss.json.actions, []);
+  assert.ok(plAddMiss.json.reply);
+  // Queue / favorite commands
+  const pidx = await request(server, '/api/music/ai', 'POST', { message: 'phát bài số 2' });
+  assert.strictEqual(pidx.json.actions[0].name, 'play_index');
+  assert.strictEqual(pidx.json.actions[0].args.index, 2);
+  const qrm = await request(server, '/api/music/ai', 'POST', { message: 'remove track 4' });
+  assert.strictEqual(qrm.json.actions[0].name, 'queue_remove');
+  assert.strictEqual(qrm.json.actions[0].args.index, 4);
+  const fav = await request(server, '/api/music/ai', 'POST', { message: 'like this' });
+  assert.strictEqual(fav.json.actions[0].name, 'favorite');
+  // A normal song request still returns tracks via `items` + queue_add (the panel decides play-now vs choice card)
+  const song = await request(server, '/api/music/ai', 'POST', { message: 'lofi hip hop radio' });
+  assert.strictEqual(song.status, 200);
+  assert.ok(song.json.intent.autoPlay !== false);
+  assert.ok(song.json.items.length >= 1, 'known seed track should resolve without API key');
+  assert.strictEqual(song.json.actions[0].name, 'queue_add');
+  assert.strictEqual(song.json.replyIsGenerated, true);
+
+  // Adapter: every new action is allowed and registered; delete is flagged for client confirmation
+  ['queue_append', 'play_now', 'play_index', 'queue_remove', 'playlist_create', 'playlist_add', 'playlist_play',
+   'playlist_queue', 'playlist_rename', 'playlist_delete', 'playlist_list', 'favorite'].forEach((n) => {
+    assert.ok(adapter.ALLOWED.has(n), 'adapter must allow ' + n);
+  });
+  assert.ok(adapter.actions.find((a) => a.name === 'playlist_delete').confirmOnClient);
+  const ctx = await adapter.getContext({ title: 'T', playing: true, queueLength: 3, queuePreview: ['a', 'b'], playlists: [{ name: 'Gym', count: 2 }] });
+  assert.strictEqual(ctx.title, 'T');
+  assert.strictEqual(ctx.queueLength, 3);
+  assert.strictEqual(ctx.playlists[0].name, 'Gym');
+  assert.ok((await adapter.executeAction({ name: 'playlist_create', args: {} })).ok);
+  assert.strictEqual((await adapter.executeAction({ name: 'rm_rf', args: {} })).ok, false);
+
     console.log('All tests passed');
   } finally {
     server.close();

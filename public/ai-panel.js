@@ -76,12 +76,36 @@ function gameContext() {
       repeat = p.repeat || 'off';
     }
   } catch (e) {}
+  let queuePreview = [], playlists = [];
+  try {
+    if (window.btAI && window.btAI.snapshot) {
+      const snap = window.btAI.snapshot();
+      queuePreview = snap.queue || [];
+      playlists = snap.playlists || [];
+    }
+  } catch (e) {}
   return {
     screen: tab ? tab.dataset.tab : 'home',
-    playing, title, channel, videoId, queueLength, index, shuffle, repeat
+    playing, title, channel, videoId, queueLength, index, shuffle, repeat,
+    queuePreview, playlists
   };
 }
-function executeActions(actions) {
+/** Every action the player/library side (main.js → runAiAction) understands. */
+const CLIENT_ACTIONS = new Set([
+  'play', 'pause', 'toggle', 'stop', 'next', 'previous', 'shuffle', 'repeat',
+  'seek', 'volume', 'mute', 'unmute', 'sleep',
+  'queue_clear', 'queue_add', 'play_next', 'queue_append', 'play_now', 'play_items', 'play_index', 'queue_remove',
+  'now_playing', 'queue_status', 'favorite',
+  'playlist_create', 'playlist_add', 'playlist_play', 'playlist_queue', 'playlist_rename', 'playlist_delete', 'playlist_list'
+]);
+
+/**
+ * Runs AI actions. Returns the list of result messages produced by the player/library
+ * (real outcomes: counts, "not found", cancelled…), so chat never claims success it did not get.
+ * opts.skipItemActions: ignore queue_add/play_next (the caller handles the tracks itself).
+ */
+function executeActions(actions, opts) {
+  const messages = [];
   (actions || []).forEach(a => {
     if (!a || a.ok === false) return;
     const name = a.action || a.name;
@@ -94,12 +118,14 @@ function executeActions(actions) {
       else document.querySelector('.nav-btn[data-tab="' + (value || 'home') + '"]')?.click();
     }
     if (name === 'open_player') document.querySelector('[data-action="open-player"]')?.click();
-    // Music controls via custom event for module player
-    if (['play','pause','toggle','next','previous','shuffle','repeat'].includes(name)) {
-      window.dispatchEvent(new CustomEvent('bt-ai-action', { detail: { name, args } }));
-    }
-    if (name === 'queue_add' || name === 'play_next') {
-      window.dispatchEvent(new CustomEvent('bt-ai-action', { detail: { name, args, items: args.items || a.items } }));
+    // Music controls / queue / playlists via custom event for the module player
+    if (CLIENT_ACTIONS.has(name)) {
+      if (opts && opts.skipItemActions && (name === 'queue_add' || name === 'play_next')) return;
+      const detail = {
+        name, args, items: args.items || a.items,
+        done: (r) => { if (r && r.message) messages.push(r.message); }
+      };
+      window.dispatchEvent(new CustomEvent('bt-ai-action', { detail }));
     }
     if (name === 'search' && (args.query || value)) {
       const input = document.getElementById('searchInput');
@@ -110,8 +136,94 @@ function executeActions(actions) {
       }
     }
   });
+  return messages;
 }
 
+/* ——— "Play now / Add to queue" choice for AI song requests ——— */
+const CHOICE_TIMEOUT_S = 15;
+const pendingChoices = new Set();
+const isViText = (s) => /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(s || '') || /\b(phat|bai|nhac|them|tao|cho toi)\b/i.test(s || '');
+function langOf(message, data) {
+  const a = data && data.actions && data.actions[0];
+  if (a && a.args && a.args.lang) return a.args.lang;
+  return isViText(message) ? 'vi' : 'en';
+}
+function musicBusy() {
+  try { return !!(window.btAI && window.btAI.isBusy()); } catch (e) { return false; }
+}
+function runAction(name, args, items) {
+  let msg = '';
+  window.dispatchEvent(new CustomEvent('bt-ai-action', {
+    detail: { name, args: args || {}, items, done: (r) => { if (r && r.message) msg = r.message; } }
+  }));
+  return msg;
+}
+/** Resolve every unanswered choice card as "add after the last track" (the default). */
+function resolvePendingChoices() {
+  Array.from(pendingChoices).forEach((fn) => { try { fn('auto'); } catch (e) {} });
+}
+function renderChoiceCard(items, lang, introText) {
+  const vi = lang === 'vi';
+  const first = items[0] || {};
+  const more = items.length - 1;
+  const msg = appendMsg('ai', '');
+  msg.classList.add('ai-choice');
+  msg.innerHTML =
+    (introText ? '<div class="ai-choice-intro">' + escapeHtml(introText).replace(/\n/g, '<br>') + '</div>' : '') +
+    '<div class="ai-choice-track">' +
+      (first.thumbnail ? '<img src="' + escapeHtml(first.thumbnail) + '" alt="" loading="lazy">' : '') +
+      '<div><strong>' + escapeHtml(first.title || 'Track') + '</strong>' +
+      '<small>' + escapeHtml(first.channelTitle || '') + (more > 0 ? ' · +' + more + (vi ? ' bài nữa' : ' more') : '') + '</small></div>' +
+    '</div>' +
+    '<button type="button" class="ai-choice-btn ai-choice-now" data-choice="now">▶ ' + (vi ? 'Phát ngay' : 'Play now') + '</button>' +
+    '<button type="button" class="ai-choice-btn ai-choice-queue" data-choice="queue">＋ ' + (vi ? 'Thêm vào danh sách phát sau' : 'Add to queue') +
+      ' <span class="ai-choice-timer"></span></button>' +
+    '<div class="ai-choice-note">' + (vi ? 'Không chọn gì: tự thêm vào cuối danh sách phát.' : 'No choice: it is added after the last track.') + '</div>';
+  aiChat && (aiChat.scrollTop = aiChat.scrollHeight);
+
+  let left = CHOICE_TIMEOUT_S;
+  let done = false;
+  const timerEl = msg.querySelector('.ai-choice-timer');
+  const paint = () => { if (timerEl) timerEl.textContent = '(' + left + 's)'; };
+  paint();
+  const tick = setInterval(() => {
+    left -= 1;
+    if (left <= 0) { choose('auto'); return; }
+    paint();
+  }, 1000);
+
+  function choose(kind) {
+    if (done) return;
+    done = true;
+    clearInterval(tick);
+    pendingChoices.delete(choose);
+    // Re-check the player: if the music ended while the card was open, "auto" simply starts playing.
+    const busyNow = musicBusy();
+    let result = '';
+    if (kind === 'now') {
+      result = runAction(busyNow ? 'play_now' : 'play_items', { lang }, items);
+    } else if (kind === 'auto' && !busyNow) {
+      result = runAction('play_items', { lang }, items);
+    } else {
+      result = runAction('queue_append', { lang }, items);
+    }
+    const mark = kind === 'auto' ? '⏱ ' : '✓ ';
+    msg.classList.add('done');
+    msg.innerHTML = '<div class="ai-choice-result">' + mark + escapeHtml(result || (vi ? 'Xong.' : 'Done.')) + '</div>';
+  }
+  pendingChoices.add(choose);
+  msg.querySelectorAll('[data-choice]').forEach((btn) => {
+    btn.addEventListener('click', () => choose(btn.dataset.choice));
+  });
+  return msg;
+}
+
+/**
+ * Sends the message to the music AI and applies the result.
+ * Returns { text, card } for the chat, or null when the music endpoint failed (caller falls back to generic AI chat).
+ * Song requests:  player idle  → play immediately
+ *                 player busy  → choice card (Play now / Add to queue; default = add after the last track)
+ */
 async function runMusicAI(message) {
   try {
     const res = await fetch('/api/music/ai', {
@@ -121,22 +233,50 @@ async function runMusicAI(message) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'music AI failed');
-    // Execute player actions first (play/pause/queue)
+    const lang = langOf(message, data);
+    const vi = lang === 'vi';
+    const intent = data.intent || {};
+    const items = data.items || [];
     const acts = data.actions || [];
-    if (acts.length) executeActions(acts);
-    // Ensure items land in player even if actions incomplete
-    if (data.items && data.items.length) {
-      const autoPlay = !(data.intent && data.intent.autoPlay === false) && !(data.intent && data.intent.queueOnly);
-      window.dispatchEvent(new CustomEvent('bt-ai-action', {
-        detail: {
-          name: 'queue_add',
-          items: data.items,
-          args: { items: data.items, autoPlay: autoPlay },
-          autoPlay: autoPlay
+    const results = [];
+    let card = null;
+    let text = data.reply || data.error || 'OK';
+
+    if (items.length) {
+      // Tracks are handled here (once) — never again through the generic actions loop.
+      const wantsPlay = !(intent.autoPlay === false) && !intent.queueOnly;
+      if (wantsPlay) {
+        if (musicBusy()) {
+          const intro = data.replyIsGenerated
+            ? (vi ? 'Đang có nhạc phát. Bạn muốn phát bài này thế nào?' : 'Music is already playing. How do you want this one?')
+            : data.reply;
+          card = { items, lang, intro };
+          text = null;
+        } else {
+          const r = runAction('play_items', { lang }, items);
+          if (data.replyIsGenerated && r) text = r + (items.length > 1 ? (vi ? ' · +' + (items.length - 1) + ' bài trong danh sách phát' : ' · +' + (items.length - 1) + ' in queue') : '');
         }
-      }));
+      } else {
+        // Explicit "add to queue" / "play next": never interrupts the current track.
+        const r = intent.playNext
+          ? (runAction('queue_add', { lang, autoPlay: false, playNext: true }, items), vi ? 'Đã chèn ngay sau bài hiện tại: ' + items[0].title : 'Inserted right after the current track: ' + items[0].title)
+          : runAction('queue_append', { lang }, items);
+        if (data.replyIsGenerated) text = r;
+      }
     }
-    return data.reply || data.error || 'OK';
+
+    // Non-track actions: player controls, queue edits, playlists, favorites…
+    const msgs = executeActions(acts, { skipItemActions: items.length > 0 });
+    msgs.forEach((m) => results.push(m));
+
+    if (results.length) {
+      const base = (data.replyIsGenerated || !data.reply || data.reply === 'OK' || /^OK · /.test(data.reply)) ? '' : data.reply;
+      text = (base ? base + '\n' : '') + results.join('\n');
+    } else if (card) {
+      text = null;
+    }
+    if (data.warning) text = (text ? text + '\n' : '') + '⚠ ' + data.warning;
+    return { text, card };
   } catch (e) {
     console.warn('[BT Music AI]', e.message || e);
     return null;
@@ -303,6 +443,8 @@ async function sendAI() {
   const text = (aiInput.value || '').trim();
   if (!text) return;
   aiInput.value = '';
+  // A new request closes any open "play now / add to queue" card with its default (add after last track).
+  resolvePendingChoices();
   appendMsg('user', escapeHtml(text));
   const loading = appendMsg('ai', '…');
   // Prefer music DJ path for almost all chat (except pure settings/help/feedback)
@@ -313,13 +455,14 @@ async function sendAI() {
       const musicReply = await runMusicAI(text);
       if (musicReply) {
         loading.remove();
-        appendMsg('ai', escapeHtml(musicReply).replace(/\n/g, '<br>'));
+        if (musicReply.text) appendMsg('ai', escapeHtml(musicReply.text).replace(/\n/g, '<br>'));
+        if (musicReply.card) renderChoiceCard(musicReply.card.items, musicReply.card.lang, musicReply.card.intro);
         return;
       }
     }
+    // ai.chat() already forwards out.actions to executeActions (onActions) — do not run them twice.
     const out = await ai.chat(text, gameContext());
     loading.remove();
-    executeActions(out.actions);
     const local = out.source === 'local' || out.configured === false;
     appendMsg('ai', escapeHtml(out.reply || 'No response').replace(/\n/g, '<br>') +
       (local ? '<div style="opacity:.55;font-size:.75rem">Local guide</div>' : ''));

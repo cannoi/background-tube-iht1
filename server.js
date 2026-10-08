@@ -39,7 +39,7 @@ const ai = createAIService({ dataDir: DATA_DIR, appName: 'Background Tube', adap
 const fbOpts = {
   appId: 'background-tube',
   appName: 'Background Tube',
-  version: '1.2.5',
+  version: '1.4.0',
   hubId: 'SHFH-CANNOI-0905428801',
   baseUrl: 'http://14.176.78.46:8090',
   ingestToken: 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
@@ -434,6 +434,13 @@ async function ytSearchMinimal(query, maxResults = 3) {
   return payload;
 }
 
+/** 'vi' when the user's message looks Vietnamese, else 'en' (used for client-side result messages). */
+function detectLang(message) {
+  const m = String(message || '');
+  if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(m)) return 'vi';
+  return /\b(tao|them|xoa|phat|bai|nhac|danh sach|hang doi|cho toi|mo|nghe)\b/i.test(m) ? 'vi' : 'en';
+}
+
 async function handleMusicAI(body, res) {
   const message = String(body.message || body.query || '').trim();
   if (!message) { sendJson(res, 400, { ok: false, error: 'message required' }); return; }
@@ -448,15 +455,23 @@ async function handleMusicAI(body, res) {
   intent = musicEngine.localIntentParse(message);
 
   // 2) AI only when local is weak (generic search with vague text still OK)
+  const lang = detectLang(message);
   const simpleControl = intent && intent.intent === 'player_control';
   const simpleQueue = intent && intent.intent === 'queue_operation';
-  const needsAI = !simpleControl && !simpleQueue && ai.configured() && (
-    /giống|similar|gợi ý|recommend|theo mood|buổi tối|thư giãn|dễ hát|đang hot|top|playlist/i.test(message)
+  const isPlaylistOp = intent && intent.intent === 'playlist_operation';
+  // Playlist commands that need no song list (play/delete/rename/list/queue/from-queue/add-current) never need the AI.
+  // (playlist_add of ONE named song also needs no AI: the user already said which song.)
+  const simplePlaylist = isPlaylistOp && (!['playlist_create', 'playlist_add'].includes(intent.action) || intent.fromQueue || intent.current || !intent.query ||
+    (intent.action === 'playlist_add' && intent.limit === 1 && !intent.mood));
+  const needsAI = !simpleControl && !simpleQueue && !simplePlaylist && intent.intent !== 'library' && ai.configured() && (
+    /giống|similar|gợi ý|recommend|theo mood|buổi tối|thư giãn|dễ hát|đang hot|top|playlist/i.test(message) ||
+    (isPlaylistOp && !!intent.query)
   );
 
   if (needsAI) {
     try {
-      const systemHint = 'You are a music DJ. Reply briefly in the user language. ALWAYS include a JSON line: {"intent":"music_search|recommendation|karaoke|player_control","query":"...","mood":"...","language":"vi|en|ja","limit":8,"autoPlay":true,"candidates":[{"artist":"","title":""}]}';
+      const systemHint = 'You are a music DJ. Reply briefly in the user language. ALWAYS include a JSON line: {"intent":"music_search|recommendation|karaoke|player_control|playlist_operation","query":"...","mood":"...","language":"vi|en|ja","limit":8,"autoPlay":true,"candidates":[{"artist":"","title":""}]}. ' +
+        'For creating/filling a playlist use {"intent":"playlist_operation","action":"playlist_create|playlist_add","playlistName":"...","limit":10,"candidates":[{"artist":"","title":""}]} with REAL, well-known songs in candidates.';
       const out = await ai.chat({
         message: message + '\n\n' + systemHint,
         history: history.slice(-6),
@@ -466,10 +481,21 @@ async function handleMusicAI(body, res) {
       actions = out.actions || [];
       const parsed = musicEngine.parseIntent(aiReply) || null;
       if (parsed && parsed.intent && parsed.intent !== 'help') {
-        // merge: keep local autoPlay default
-        intent = Object.assign({ autoPlay: true }, intent || {}, parsed);
+        if (isPlaylistOp) {
+          // The local parser already knows this is a playlist command: keep its intent/action/name,
+          // take only the song list details from the model.
+          ['candidates', 'query', 'mood', 'language', 'region', 'limit'].forEach((k) => {
+            // A count/value the user already stated is never overridden by the model.
+            if (parsed[k] !== undefined && intent[k] === undefined) intent[k] = parsed[k];
+          });
+          if (parsed.candidates !== undefined) intent.candidates = parsed.candidates;
+          if (!intent.playlistName && parsed.playlistName) intent.playlistName = parsed.playlistName;
+        } else {
+          // merge: keep local autoPlay default
+          intent = Object.assign({ autoPlay: true }, intent || {}, parsed);
+        }
       }
-      if (intent && !intent.candidates && /recommendation|music_search|karaoke/.test(intent.intent || '')) {
+      if (intent && !intent.candidates && /recommendation|music_search|karaoke|playlist_operation/.test(intent.intent || '')) {
         const lines = String(aiReply).split('\n').map((l) => l.replace(/^\d+[).\s-]+/, '').trim()).filter(Boolean);
         const cands = [];
         for (const line of lines.slice(0, 12)) {
@@ -490,7 +516,7 @@ async function handleMusicAI(body, res) {
   if (!intent) intent = musicEngine.localIntentParse(message);
   if (!intent) intent = { intent: 'music_search', query: message, limit: 8, autoPlay: true };
 
-  const validIntents = new Set(['player_control', 'music_search', 'recommendation', 'queue_operation', 'karaoke', 'library', 'help']);
+  const validIntents = new Set(['player_control', 'music_search', 'recommendation', 'queue_operation', 'playlist_operation', 'karaoke', 'library', 'help']);
   if (!validIntents.has(intent.intent)) {
     intent = { intent: 'music_search', query: message, limit: 8, autoPlay: true };
   }
@@ -507,8 +533,10 @@ async function handleMusicAI(body, res) {
       if (act === 'seek') args.seconds = intent.value;
       else if (act === 'volume') args.level = intent.value;
       else if (act === 'sleep') args.minutes = intent.value;
+      else if (act === 'play_index') args.index = intent.value;
       else args.value = intent.value;
     }
+    args.lang = lang;
     let reply = aiReply;
     if (!reply) {
       if (act === 'now_playing') {
@@ -518,6 +546,8 @@ async function handleMusicAI(body, res) {
         reply = 'Queue has ' + ((body.context && body.context.queueLength) || 0) + ' track(s).';
       } else if (act === 'sleep') {
         reply = (intent.value === 0) ? 'Sleep timer cleared.' : ('Sleep timer: ' + intent.value + ' min.');
+      } else if (act === 'play_index') {
+        reply = (lang === 'vi' ? 'Phát bài số ' : 'Playing track #') + intent.value;
       } else {
         reply = 'OK · ' + act;
       }
@@ -532,12 +562,49 @@ async function handleMusicAI(body, res) {
 
   if (intent.intent === 'queue_operation') {
     const act = intent.action || 'queue_clear';
+    const qargs = { lang };
+    if (act === 'queue_remove') qargs.index = intent.value;
     sendJson(res, 200, {
       ok: true, intent, reply: aiReply || ('OK · ' + act),
-      actions: [{ name: act, args: {}, client_execute: true }],
+      actions: [{ name: act, args: qargs, client_execute: true }],
       items: [],
     });
     return;
+  }
+
+  if (intent.intent === 'library') {
+    const act = intent.action || 'favorite';
+    sendJson(res, 200, {
+      ok: true, intent, reply: aiReply || ('OK · ' + act),
+      actions: [{ name: act, args: { lang }, client_execute: true }],
+      items: [],
+    });
+    return;
+  }
+
+  // Playlist commands that need no song list → straight to the client (which owns local playlists)
+  if (intent.intent === 'playlist_operation') {
+    const act = intent.action || 'playlist_list';
+    const ALLOWED_PL = new Set(['playlist_create', 'playlist_add', 'playlist_play', 'playlist_queue', 'playlist_rename', 'playlist_delete', 'playlist_list']);
+    if (!ALLOWED_PL.has(act)) {
+      sendJson(res, 200, { ok: true, intent, reply: aiReply || 'Unknown playlist command.', items: [], actions: [] });
+      return;
+    }
+    const needsSongs = (act === 'playlist_create' && !intent.fromQueue && !!(intent.query || (intent.candidates && intent.candidates.length))) ||
+      (act === 'playlist_add' && !intent.current && !!(intent.query || (intent.candidates && intent.candidates.length)));
+    if (!needsSongs) {
+      const args = { lang, name: intent.playlistName || '' };
+      if (intent.newName) args.newName = intent.newName;
+      if (intent.fromQueue) args.fromQueue = true;
+      if (intent.current) args.current = true;
+      if (act === 'playlist_delete') args.requiresConfirmation = true;
+      sendJson(res, 200, {
+        ok: true, intent, reply: aiReply || '', replyIsGenerated: !aiReply,
+        actions: [{ name: act, args, client_execute: true }],
+        items: [],
+      });
+      return;
+    }
   }
 
   if (intent.intent === 'help') {
@@ -550,12 +617,23 @@ async function handleMusicAI(body, res) {
   }
 
   // Resolve playable tracks
-  let candidates = intent.candidates && intent.candidates.length ? intent.candidates : musicEngine.seedCandidates(intent);
-  if (intent.intent === 'music_search' && intent.query) {
-    candidates = [{ artist: '', title: intent.query, query: intent.query }, ...candidates];
+  // For playlist commands the "what to look for" part comes from the content of the request.
+  const isPlaylist = intent.intent === 'playlist_operation';
+  let rIntent = intent;
+  if (isPlaylist) {
+    const ci = musicEngine.playlistContentIntent(intent.query || '') ||
+      { intent: 'music_search', query: intent.playlistName || message, limit: 8 };
+    rIntent = Object.assign({}, ci, { candidates: intent.candidates, limit: intent.limit || ci.limit || 8 });
+    ['mood', 'language', 'region'].forEach((k) => { if (intent[k]) rIntent[k] = intent[k]; });
   }
-  if (intent.intent === 'karaoke') {
-    const q = intent.query || message;
+  const hasAiCandidates = !!(rIntent.candidates && rIntent.candidates.length);
+
+  let candidates = hasAiCandidates ? rIntent.candidates : musicEngine.seedCandidates(rIntent);
+  if (rIntent.intent === 'music_search' && rIntent.query && !(isPlaylist && hasAiCandidates)) {
+    candidates = [{ artist: '', title: rIntent.query, query: rIntent.query }, ...candidates];
+  }
+  if (rIntent.intent === 'karaoke') {
+    const q = rIntent.query || message;
     candidates = [
       { artist: '', title: q + ' karaoke', query: q + ' karaoke' },
       { artist: '', title: q, query: q },
@@ -566,30 +644,60 @@ async function handleMusicAI(body, res) {
   let items = [];
   try {
     items = await musicEngine.resolveCandidates(
-      candidates.slice(0, intent.limit || 8),
+      candidates.slice(0, rIntent.limit || 8),
       async (q, n) => { usedSearchApi = true; return ytSearchMinimal(q, n); },
-      { limit: intent.limit || 8, history }
+      { limit: rIntent.limit || 8, history }
     );
   } catch (e) {
     console.warn('resolveCandidates', e.message || e);
   }
 
-  if (!items.length && (intent.query || message) && getApiKey()) {
+  if (!items.length && (rIntent.query || message) && getApiKey()) {
     try {
       usedSearchApi = true;
-      const q = intent.intent === 'karaoke'
-        ? ((intent.query || message) + ' karaoke')
-        : (intent.query || message);
-      const data = await ytSearchMinimal(q, intent.limit || 8);
-      items = data.items || [];
+      const q = rIntent.intent === 'karaoke'
+        ? ((rIntent.query || message) + ' karaoke')
+        : (rIntent.query || message);
+      const data = await ytSearchMinimal(q, rIntent.limit || 8);
+      items = (data.items || []).slice(0, rIntent.limit || 8);
     } catch (e) {
       console.warn('yt fallback', e.message || e);
     }
   }
 
-  items = musicEngine.rankWithTrends(items, { mood: intent.mood, region: intent.region || process.env.REGION || 'VN' });
+  // Playlists keep the order the user/AI asked for; everything else is ranked as before.
+  if (!isPlaylist) {
+    items = musicEngine.rankWithTrends(items, { mood: rIntent.mood, region: rIntent.region || process.env.REGION || 'VN' });
+  }
 
-  const autoPlay = intent.autoPlay !== false && !intent.queueOnly;
+  if (isPlaylist) {
+    const act = intent.action;
+    const noKey = !getApiKey();
+    if (act === 'playlist_add' && !items.length) {
+      sendJson(res, 200, {
+        ok: true, intent, usedSearchApi, items: [], actions: [],
+        reply: (aiReply ? aiReply + '\n' : '') + (lang === 'vi'
+          ? 'Không tìm được bài phù hợp để thêm' + (noKey ? ' (server chưa có YouTube API key).' : '.')
+          : 'Could not find a matching track to add' + (noKey ? ' (server has no YouTube API key).' : '.')),
+      });
+      return;
+    }
+    const args = { lang, name: intent.playlistName || '', items };
+    sendJson(res, 200, {
+      ok: true, intent, usedSearchApi,
+      reply: aiReply || '', replyIsGenerated: !aiReply,
+      warning: (!items.length && act === 'playlist_create')
+        ? (lang === 'vi'
+            ? 'Chưa tìm được bài phát được nên playlist đang trống' + (noKey ? ' (server chưa có YouTube API key).' : '.')
+            : 'No playable tracks were found, so the playlist is empty' + (noKey ? ' (server has no YouTube API key).' : '.'))
+        : undefined,
+      items: [],            // never auto-played: tracks travel inside the playlist action
+      actions: [{ name: act, args, client_execute: true }],
+    });
+    return;
+  }
+
+  const autoPlay = rIntent.autoPlay !== false && !rIntent.queueOnly;
   const reply = aiReply
     || (items.length
       ? (autoPlay
@@ -601,10 +709,11 @@ async function handleMusicAI(body, res) {
     ok: true,
     intent,
     reply,
+    replyIsGenerated: !aiReply,
     usedSearchApi,
     items,
     actions: items[0]
-      ? [{ name: 'queue_add', args: { items, autoPlay, playNext: !!intent.playNext }, client_execute: true }]
+      ? [{ name: 'queue_add', args: { items, autoPlay, playNext: !!intent.playNext, lang }, client_execute: true }]
       : actions,
   });
 }
@@ -625,7 +734,7 @@ async function handleRequest(req, res) {
   }
 
   if (url.pathname === '/health' && req.method === 'GET') {
-    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.2.5', timestamp: new Date().toISOString() });
+    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.4.0', timestamp: new Date().toISOString() });
   }
 
   if (url.pathname === '/api/config-status' && req.method === 'GET') {
@@ -693,7 +802,7 @@ async function handleRequest(req, res) {
   // Music AI
   if (url.pathname === '/api/music/ai' && req.method === 'POST') {
     if (!rateLimit('music:' + ip, 40, 60000)) return sendJson(res, 429, { ok: false, error: 'rate_limited' });
-    try { return handleMusicAI(await readBody(req), res); }
+    try { return await handleMusicAI(await readBody(req), res); }
     catch (e) { return sendJson(res, 500, { ok: false, error: e.message }); }
   }
   if (url.pathname === '/api/music/resolve' && req.method === 'POST') {
@@ -904,7 +1013,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.3.1 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.4.0 running on 0.0.0.0:' + PORT);
   });
 }
 
