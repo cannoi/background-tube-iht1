@@ -230,6 +230,140 @@ function closeAIPanel() {
   const ov = document.getElementById('aiOverlay');
   if (ov) ov.hidden = true;
   setFabVisible(true);
+
+/* ——— Multilingual voice command (AI Chat composer only) ——— */
+const VOICE_AUTO_SEND_KEY = 'bt_voice_auto_send';
+function voiceAutoSendEnabled() {
+  try {
+    const v = localStorage.getItem(VOICE_AUTO_SEND_KEY);
+    if (v === null || v === undefined) return true; // default ON
+    return v !== '0' && v !== 'false';
+  } catch (_) { return true; }
+}
+
+let voiceRec = null;
+let voiceState = 'idle'; // idle | listening | processing | error | unsupported | permission_denied
+
+function setMicState(state, message) {
+  voiceState = state;
+  const btn = document.getElementById('aiMic');
+  const st = document.getElementById('aiMicStatus');
+  if (btn) {
+    btn.classList.toggle('listening', state === 'listening');
+    btn.classList.toggle('processing', state === 'processing');
+    btn.setAttribute('aria-pressed', state === 'listening' ? 'true' : 'false');
+    btn.disabled = state === 'unsupported';
+  }
+  if (st) {
+    if (!message && (state === 'idle' || state === 'success')) {
+      st.hidden = true;
+      st.textContent = '';
+      return;
+    }
+    st.hidden = false;
+    st.className = 'ai-mic-status' + (state === 'error' || state === 'permission_denied' || state === 'unsupported' ? ' err' : state === 'success' ? ' ok' : '');
+    st.textContent = message || state;
+  }
+}
+
+function getSpeechRecognition() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function stopVoice() {
+  try { if (voiceRec) voiceRec.stop(); } catch (_) {}
+  voiceRec = null;
+  if (voiceState === 'listening') setMicState('idle', '');
+}
+
+function startVoiceCommand() {
+  const SR = getSpeechRecognition();
+  if (!SR) {
+    setMicState('unsupported', 'Voice not supported in this browser. Type your command.');
+    return;
+  }
+  if (voiceState === 'listening') {
+    stopVoice();
+    return;
+  }
+  const rec = new SR();
+  voiceRec = rec;
+  // Multilingual: let the engine auto-detect; prefer UI language as hint
+  try {
+    rec.lang = (navigator.language || 'en-US');
+  } catch (_) {}
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.maxAlternatives = 1;
+
+  setMicState('listening', 'Listening…');
+
+  rec.onresult = (ev) => {
+    let interim = '';
+    let finalText = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const t = ev.results[i][0].transcript || '';
+      if (ev.results[i].isFinal) finalText += t;
+      else interim += t;
+    }
+    const input = document.getElementById('aiInput');
+    if (input) input.value = (finalText || interim || '').trim();
+    if (finalText) {
+      setMicState('processing', 'Processing…');
+      const text = finalText.trim();
+      if (input) input.value = text;
+      if (text && voiceAutoSendEnabled()) {
+        // Local intent first happens inside sendAI → /api/music/ai localIntentParse
+        setTimeout(() => { try { sendAI(); } catch (_) {} }, 80);
+      } else {
+        setMicState('success', text ? 'Edit or press send' : '');
+        setTimeout(() => setMicState('idle', ''), 1500);
+      }
+    }
+  };
+
+  rec.onerror = (ev) => {
+    const err = (ev && ev.error) || 'error';
+    if (err === 'not-allowed' || err === 'service-not-allowed') {
+      setMicState('permission_denied', 'Microphone permission required.');
+    } else if (err === 'no-speech') {
+      setMicState('error', 'No speech detected.');
+      setTimeout(() => setMicState('idle', ''), 2000);
+    } else if (err === 'aborted') {
+      setMicState('idle', '');
+    } else {
+      setMicState('error', 'Voice error: ' + err);
+      setTimeout(() => setMicState('idle', ''), 2500);
+    }
+    voiceRec = null;
+  };
+
+  rec.onend = () => {
+    voiceRec = null;
+    if (voiceState === 'listening') setMicState('idle', '');
+  };
+
+  try {
+    rec.start();
+  } catch (e) {
+    setMicState('error', e.message || 'Could not start microphone.');
+    voiceRec = null;
+  }
+}
+
+document.getElementById('aiMic')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  startVoiceCommand();
+});
+
+if (!getSpeechRecognition()) {
+  setMicState('unsupported', '');
+  const b = document.getElementById('aiMic');
+  if (b) b.title = 'Voice not supported in this browser';
+}
+
+
 ensureRemoteCard();
 }
 document.getElementById('aiClose')?.addEventListener('click', closeAIPanel);
@@ -474,4 +608,138 @@ fb.sync().catch(e => {
 });
 setUnread(0);
 setFabVisible(true);
+
+/* ——— Multilingual voice command (AI Chat composer only) ——— */
+const VOICE_AUTO_SEND_KEY = 'bt_voice_auto_send';
+function voiceAutoSendEnabled() {
+  try {
+    const v = localStorage.getItem(VOICE_AUTO_SEND_KEY);
+    if (v === null || v === undefined) return true; // default ON
+    return v !== '0' && v !== 'false';
+  } catch (_) { return true; }
+}
+
+let voiceRec = null;
+let voiceState = 'idle'; // idle | listening | processing | error | unsupported | permission_denied
+
+function setMicState(state, message) {
+  voiceState = state;
+  const btn = document.getElementById('aiMic');
+  const st = document.getElementById('aiMicStatus');
+  if (btn) {
+    btn.classList.toggle('listening', state === 'listening');
+    btn.classList.toggle('processing', state === 'processing');
+    btn.setAttribute('aria-pressed', state === 'listening' ? 'true' : 'false');
+    btn.disabled = state === 'unsupported';
+  }
+  if (st) {
+    if (!message && (state === 'idle' || state === 'success')) {
+      st.hidden = true;
+      st.textContent = '';
+      return;
+    }
+    st.hidden = false;
+    st.className = 'ai-mic-status' + (state === 'error' || state === 'permission_denied' || state === 'unsupported' ? ' err' : state === 'success' ? ' ok' : '');
+    st.textContent = message || state;
+  }
+}
+
+function getSpeechRecognition() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function stopVoice() {
+  try { if (voiceRec) voiceRec.stop(); } catch (_) {}
+  voiceRec = null;
+  if (voiceState === 'listening') setMicState('idle', '');
+}
+
+function startVoiceCommand() {
+  const SR = getSpeechRecognition();
+  if (!SR) {
+    setMicState('unsupported', 'Voice not supported in this browser. Type your command.');
+    return;
+  }
+  if (voiceState === 'listening') {
+    stopVoice();
+    return;
+  }
+  const rec = new SR();
+  voiceRec = rec;
+  // Multilingual: let the engine auto-detect; prefer UI language as hint
+  try {
+    rec.lang = (navigator.language || 'en-US');
+  } catch (_) {}
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.maxAlternatives = 1;
+
+  setMicState('listening', 'Listening…');
+
+  rec.onresult = (ev) => {
+    let interim = '';
+    let finalText = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const t = ev.results[i][0].transcript || '';
+      if (ev.results[i].isFinal) finalText += t;
+      else interim += t;
+    }
+    const input = document.getElementById('aiInput');
+    if (input) input.value = (finalText || interim || '').trim();
+    if (finalText) {
+      setMicState('processing', 'Processing…');
+      const text = finalText.trim();
+      if (input) input.value = text;
+      if (text && voiceAutoSendEnabled()) {
+        // Local intent first happens inside sendAI → /api/music/ai localIntentParse
+        setTimeout(() => { try { sendAI(); } catch (_) {} }, 80);
+      } else {
+        setMicState('success', text ? 'Edit or press send' : '');
+        setTimeout(() => setMicState('idle', ''), 1500);
+      }
+    }
+  };
+
+  rec.onerror = (ev) => {
+    const err = (ev && ev.error) || 'error';
+    if (err === 'not-allowed' || err === 'service-not-allowed') {
+      setMicState('permission_denied', 'Microphone permission required.');
+    } else if (err === 'no-speech') {
+      setMicState('error', 'No speech detected.');
+      setTimeout(() => setMicState('idle', ''), 2000);
+    } else if (err === 'aborted') {
+      setMicState('idle', '');
+    } else {
+      setMicState('error', 'Voice error: ' + err);
+      setTimeout(() => setMicState('idle', ''), 2500);
+    }
+    voiceRec = null;
+  };
+
+  rec.onend = () => {
+    voiceRec = null;
+    if (voiceState === 'listening') setMicState('idle', '');
+  };
+
+  try {
+    rec.start();
+  } catch (e) {
+    setMicState('error', e.message || 'Could not start microphone.');
+    voiceRec = null;
+  }
+}
+
+document.getElementById('aiMic')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  startVoiceCommand();
+});
+
+if (!getSpeechRecognition()) {
+  setMicState('unsupported', '');
+  const b = document.getElementById('aiMic');
+  if (b) b.title = 'Voice not supported in this browser';
+}
+
+
 ensureRemoteCard();

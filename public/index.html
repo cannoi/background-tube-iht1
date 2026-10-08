@@ -80,9 +80,15 @@
 
       <div class="tab-pane active" id="tab-chat">
         <div class="panel-body" id="aiChat"></div>
-        <div class="panel-footer">
-          <input type="text" id="aiInput" placeholder="Play chill music, Next, Karaoke…" autocomplete="off" enterkeyhint="send">
-          <button type="button" id="aiSend" aria-label="Send">➤</button>
+        <div class="panel-footer ai-composer">
+          <div class="ai-composer-row">
+            <input type="text" id="aiInput" placeholder="Ask AI or speak…" autocomplete="off" enterkeyhint="send" inputmode="text">
+            <button type="button" id="aiMic" class="ai-mic-btn" title="Voice command" aria-label="Voice command" aria-pressed="false">
+              <i class="fa-solid fa-microphone" aria-hidden="true"></i>
+            </button>
+            <button type="button" id="aiSend" aria-label="Send">➤</button>
+          </div>
+          <div id="aiMicStatus" class="ai-mic-status" hidden></div>
         </div>
         <div class="ai-status-bar" id="aiStatusBar">AI: checking…</div>
       </div>

@@ -362,3 +362,63 @@
 }
 .ai-fab{bottom:88px!important;z-index:320}
 .panel-overlay{z-index:400}
+
+
+/* AI Chat composer with in-input microphone */
+.ai-composer { flex-direction: column; align-items: stretch; gap: 4px; }
+.ai-composer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+.ai-composer-row #aiInput {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  padding: 0 12px;
+  font-size: 16px;
+  outline: none;
+}
+.ai-composer-row #aiInput:focus { border-color: #6a11cb; }
+.ai-mic-btn {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 1.05rem;
+}
+.ai-mic-btn.listening {
+  background: #c0392b;
+  border-color: #e74c3c;
+  animation: ai-mic-pulse 1s infinite;
+}
+.ai-mic-btn.processing {
+  background: #6a11cb;
+  opacity: 0.85;
+}
+.ai-mic-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+@keyframes ai-mic-pulse {
+  50% { opacity: 0.7; transform: scale(1.04); }
+}
+.ai-mic-status {
+  font-size: 0.7rem;
+  color: #aaa;
+  text-align: center;
+  min-height: 1em;
+  padding: 0 4px 2px;
+}
+.ai-mic-status.err { color: #ff8a80; }
+.ai-mic-status.ok { color: #81c784; }

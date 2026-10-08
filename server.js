@@ -94,15 +94,38 @@ async function detectPublicIp() {
   return null;
 }
 
+/**
+ * External port SoloHost/proxy exposes to browsers — NEVER prefer container internal 8080.
+ * Priority: PUBLIC_PORT / HOST_PORT / EXTERNAL_PORT / SOLOHOST_PORT env
+ *           → X-Forwarded-Port → port in Host / X-Forwarded-Host
+ *           → omit (80/443) rather than defaulting to process.env.PORT (often 8080 in Docker)
+ */
+function getExternalPort(req) {
+  const envKeys = ['PUBLIC_PORT', 'HOST_PORT', 'EXTERNAL_PORT', 'SOLOHOST_PORT', 'SOLOHOST_HOST_PORT', 'APP_HOST_PORT'];
+  for (const k of envKeys) {
+    const v = process.env[k];
+    if (v && String(v).trim() && String(v).trim() !== '0') return String(v).trim();
+  }
+  const xfPort = String(req.headers['x-forwarded-port'] || '').split(',')[0].trim();
+  if (xfPort) return xfPort;
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const m = host.match(/:(\d+)$/);
+  if (m) return m[1];
+  return null; // no port in host → standard 80/443
+}
+
 function requestBaseUrl(req) {
-  const envBase = (process.env.PUBLIC_BASE_URL || process.env.SHFH_PUBLIC_URL || '').replace(/\/$/, '');
-  if (envBase) return envBase;
+  const envBase = (process.env.PUBLIC_BASE_URL || process.env.SHFH_PUBLIC_URL || process.env.SOLOHOST_PUBLIC_URL || '').replace(/\/$/, '');
+  if (envBase) return { baseUrl: envBase, source: 'env' };
+
   const xfProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
   const xfHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
-  const host = xfHost || String(req.headers.host || '').trim();
+  const hostHeader = xfHost || String(req.headers.host || '').trim();
   const proto = xfProto || (req.socket && req.socket.encrypted ? 'https' : 'http');
-  if (host && !/^localhost\b|^127\.0\.0\.1\b|^0\.0\.0\.0\b/i.test(host)) {
-    return proto + '://' + host;
+
+  // Client-facing host:port from proxy/browser (SoloHost published address)
+  if (hostHeader && !/^localhost\b|^127\.0\.0\.1\b|^0\.0\.0\.0\b|\[::1\]/i.test(hostHeader)) {
+    return { baseUrl: proto + '://' + hostHeader, source: 'forwarded_host' };
   }
   return null;
 }
@@ -694,25 +717,47 @@ async function handleRequest(req, res) {
   // Remote
   if (url.pathname === '/api/public-url' && req.method === 'GET') {
     try {
-      let base = requestBaseUrl(req);
-      let source = base ? 'request_host' : null;
-      if (!base) {
-        const ip = await detectPublicIp();
-        const port = process.env.PUBLIC_PORT || process.env.PORT || 8080;
-        if (ip) {
-          base = 'http://' + ip + ':' + port;
-          source = 'public_ip';
-        }
+      const internalPort = Number(process.env.PORT || 8080);
+      let base = null;
+      let source = null;
+      let externalPort = getExternalPort(req);
+      const ip = await detectPublicIp();
+
+      const fromReq = requestBaseUrl(req);
+      // Host port from browser/proxy is the SoloHost published port when user is already connected
+      if (!externalPort && fromReq && fromReq.baseUrl) {
+        const pm = String(fromReq.baseUrl).match(/:(\d+)$/);
+        if (pm) externalPort = pm[1];
       }
-      if (!base) {
-        base = 'http://127.0.0.1:' + (process.env.PORT || 8080);
+
+      if (ip && externalPort) {
+        // Canonical remote URL: public IP + SoloHost external port (never force container PORT)
+        base = 'http://' + ip + ':' + externalPort;
+        source = 'public_ip_external_port';
+      } else if (fromReq && fromReq.baseUrl) {
+        base = fromReq.baseUrl;
+        source = fromReq.source;
+      } else if (ip) {
+        base = 'http://' + ip;
+        source = 'public_ip_no_port';
+      } else {
+        base = 'http://127.0.0.1' + (externalPort ? ':' + externalPort : '');
         source = 'fallback_local';
       }
-      return sendJson(res, 200, { ok: true, baseUrl: base.replace(/\/$/, ''), source, port: Number(process.env.PORT || 8080) });
+
+      return sendJson(res, 200, {
+        ok: true,
+        baseUrl: String(base).replace(/\/$/, ''),
+        source: source,
+        externalPort: externalPort || null,
+        internalPort: internalPort,
+        publicIp: ip || null,
+      });
     } catch (e) {
       return sendJson(res, 500, { ok: false, error: e.message });
     }
   }
+
 
   if (url.pathname === '/api/remote/pair' && req.method === 'POST') {
     if (!rateLimit('pair:' + ip, 20, 60000)) return sendJson(res, 429, { ok: false, error: 'rate_limited' });
