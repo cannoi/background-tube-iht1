@@ -33,6 +33,8 @@ let onStateCb = null;
 let serverOnline = true;
 let lastTrackId = null;
 let reconnectAttempts = 0;
+let suppressPublish = false; // true during reconnect pull — do not push stale timeline
+
 let roomLeaderId = null;
 
 export function isRoomHost() {
@@ -186,18 +188,24 @@ export async function ensureSession() {
   }
 }
 
-export async function joinSession(sid, tok, r) {
+export async function joinSession(sid, tok, r, hostId) {
   sessionId = sid;
   token = tok || null;
   role = r || 'remote';
   try {
     localStorage.setItem('bt_sync_enabled', '1');
     localStorage.setItem('bt_session_id', sessionId);
+    if (hostId) localStorage.setItem('bt_room_host', hostId);
   } catch (_) {}
+  if (hostId) roomLeaderId = hostId;
+  suppressPublish = true;
   try {
-    await api('/api/session/' + encodeURIComponent(sid) + '/join', 'POST', { clientId: CLIENT_ID, token });
+    await api('/api/session/' + encodeURIComponent(sid) + '/join', 'POST', {
+      clientId: CLIENT_ID,
+      token,
+      hostId: hostId || undefined,
+    });
   } catch (e) {
-    // Room may not exist yet — fall back to shared default room, then still use returned id if server maps it
     console.warn('[session] join failed, trying shared room', e.message || e);
     try {
       const out = await api('/api/session/room', 'POST', { clientId: CLIENT_ID });
@@ -206,11 +214,12 @@ export async function joinSession(sid, tok, r) {
   }
   connectEvents();
   startHeartbeat();
-  startPollBackup();
+  if (typeof startPollBackup === 'function') startPollBackup();
   try {
     const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
     if (snap && snap.state) applyRemoteState(snap.state, true);
   } catch (_) {}
+  suppressPublish = false;
   setOnlineUi(true);
   return sessionId;
 }
@@ -326,16 +335,15 @@ export async function pushCommand(cmd) {
   }
 }
 
-/** Push full local player snapshot — HOST ONLY (followers never rewrite host timeline) */
+/**
+ * Push player snapshot as remote control (host + guest).
+ * During reconnect pull (suppressPublish) guests/host skip to avoid rewinding timeline.
+ */
 export async function publishLocalState() {
-  if (applyingRemote) return;
+  if (applyingRemote || suppressPublish) return;
   if (!sessionId) {
     await ensureSession();
     if (!sessionId) return;
-  }
-  // Followers must not push load snapshots (reconnect/latency would seek the host)
-  if (roomLeaderId && roomLeaderId !== CLIENT_ID) {
-    return;
   }
   const p = getPlayerState();
   lastTrackId = p.active && p.active.videoId;
@@ -440,24 +448,25 @@ export function tryAutoJoinFromUrl() {
     const t = u.searchParams.get('t');
     const r = u.searchParams.get('r');
     const sync = u.searchParams.get('sync');
+    const host = u.searchParams.get('host');
     if (s) {
-      // QR / link carries the room code — force sync ON and join THAT room
       try {
         localStorage.setItem('bt_sync_enabled', '1');
         localStorage.setItem('bt_session_id', s);
+        if (host) localStorage.setItem('bt_room_host', host);
       } catch (_) {}
-      console.info('[session] joining room from URL', s);
-      return joinSession(s, t, r || 'remote').then(async (sid) => {
-        // Stay on this room; do not let a later ensureSession switch rooms
+      console.info('[session] joining room from QR', s, 'host', host);
+      // Guest follows QR host — never publish stale state on join
+      return joinSession(s, t, r || 'remote', host || undefined).then(async (sid) => {
         sessionId = sid || s;
+        if (host) roomLeaderId = host;
         try {
-          // Clean query from address bar without reload (optional)
-          if (sync === '1' || t) {
-            const clean = location.pathname || '/';
-            history.replaceState({}, '', clean);
+          if (sync === '1' || t || host) {
+            history.replaceState({}, '', location.pathname || '/');
           }
         } catch (_) {}
-        await publishLocalState().catch(() => {});
+        // Only host publishes after join; guest only follows
+        if (isRoomHost()) await publishLocalState().catch(() => {});
         return sessionId;
       });
     }
@@ -487,4 +496,26 @@ if (typeof document !== 'undefined') {
       }).catch(() => {});
     }
   });
+}
+
+
+/** Call when THIS device creates a QR — becomes room HOST for sure */
+export async function claimHostForced() {
+  await ensureSession();
+  if (!sessionId) return null;
+  const out = await pushCommand({ type: 'claim_host', force: true });
+  if (out && out.state) {
+    updateLeaderFromState(out.state);
+    roomLeaderId = CLIENT_ID;
+    try { localStorage.setItem('bt_room_host', CLIENT_ID); } catch (_) {}
+  } else {
+    roomLeaderId = CLIENT_ID;
+  }
+  await publishLocalState().catch(() => {});
+  setOnlineUi(true);
+  return getSessionInfo();
+}
+
+export function getClientId() {
+  return CLIENT_ID;
 }

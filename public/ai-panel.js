@@ -315,10 +315,20 @@ async function ensureRemoteCard() {
             localStorage.setItem('bt_sync_enabled', '1');
           } catch (e) {}
         } catch (e) { console.warn('[remote] room', e); }
+        // This device is HOST — pass hostId so QR marks us as host
+        let hostId = null;
+        try { hostId = localStorage.getItem('bt_client_id'); } catch (e) {}
+        try {
+          await fetch('/api/session/' + encodeURIComponent(sid) + '/command', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'claim_host', force: true, clientId: hostId })
+          });
+        } catch (e) {}
         const p = await fetch('/api/remote/pair', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId: sid, role: 'remote' })
+          body: JSON.stringify({ sessionId: sid, role: 'remote', hostId: hostId, clientId: hostId })
         }).then(r => r.json());
         return p;
       })()
@@ -335,7 +345,7 @@ async function ensureRemoteCard() {
     const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=' + encodeURIComponent(url);
     card.innerHTML =
       '<div class="ai-remote-title"><i class="fa-solid fa-qrcode"></i> Remote · room <code>' + String(roomCode).slice(0, 12) + '</code></div>' +
-      '<p class="ai-remote-help">Scan QR or open URL — joins the <strong>same room code</strong> and plays the same track.</p>' +
+      '<p class="ai-remote-help">Scan QR → <strong>this device is HOST</strong>; scanner is guest remote (pause/next/seek/add still work).</p>' +
       '<div class="ai-remote-qr"><img src="' + qr + '" width="160" height="160" alt="QR Remote" loading="lazy"></div>' +
       '<label class="ai-remote-label">Room code</label>' +
       '<input type="text" class="ai-remote-url" readonly value="' + String(roomCode).replace(/"/g, '&quot;') + '" onclick="this.select()">' +

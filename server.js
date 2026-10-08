@@ -39,7 +39,7 @@ const ai = createAIService({ dataDir: DATA_DIR, appName: 'Background Tube', adap
 const fbOpts = {
   appId: 'background-tube',
   appName: 'Background Tube',
-  version: '1.4.2',
+  version: '1.4.3',
   hubId: 'SHFH-CANNOI-0905428801',
   baseUrl: 'http://14.176.78.46:8090',
   ingestToken: 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
@@ -734,7 +734,7 @@ async function handleRequest(req, res) {
   }
 
   if (url.pathname === '/health' && req.method === 'GET') {
-    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.4.2', timestamp: new Date().toISOString() });
+    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.4.3', timestamp: new Date().toISOString() });
   }
 
   if (url.pathname === '/api/config-status' && req.method === 'GET') {
@@ -880,7 +880,7 @@ async function handleRequest(req, res) {
   if (url.pathname.match(/^\/api\/session\/[^/]+\/join$/) && req.method === 'POST') {
     const sid = url.pathname.split('/')[3];
     const body = await readBody(req).catch(() => ({}));
-    const state = sessionManager.joinSession(sid, body.clientId);
+    const state = sessionManager.joinSession(sid, body.clientId, { hostId: body.hostId });
     if (!state) return sendJson(res, 404, { ok: false, error: 'session_not_found' });
     return sendJson(res, 200, { ok: true, state });
   }
@@ -944,21 +944,29 @@ async function handleRequest(req, res) {
   if (url.pathname === '/api/remote/pair' && req.method === 'POST') {
     if (!rateLimit('pair:' + ip, 20, 60000)) return sendJson(res, 429, { ok: false, error: 'rate_limited' });
     const body = await readBody(req).catch(() => ({}));
+    // Device that creates QR is always HOST
+    const hostId = String(body.hostId || body.clientId || '').trim();
     let sid = body.sessionId;
-    // Prefer existing session; otherwise ALWAYS the shared default room (never a random private room)
     if (!sid || !sessionManager.getSession(sid)) {
       const room = sessionManager.getDefaultRoom();
       sid = room.sessionId;
     }
-    sessionManager.joinSession(sid, body.clientId || sessionManager.id());
+    if (hostId) {
+      sessionManager.joinSession(sid, hostId, { hostId });
+      sessionManager.forceSetLeader(sid, hostId);
+    } else {
+      sessionManager.joinSession(sid, body.clientId || sessionManager.id());
+    }
     const pairing = sessionManager.createPairingToken(sid, body.role || 'remote');
     if (!pairing) return sendJson(res, 400, { ok: false, error: 'pair_failed' });
-    // Path loads main app index with room id — /remote is not a separate page
-    const path = '/?s=' + encodeURIComponent(sid) + '&t=' + encodeURIComponent(pairing.token) + '&r=' + encodeURIComponent(pairing.role || 'remote') + '&sync=1';
+    let path = '/?s=' + encodeURIComponent(sid) + '&t=' + encodeURIComponent(pairing.token)
+      + '&r=' + encodeURIComponent(pairing.role || 'remote') + '&sync=1';
+    if (hostId) path += '&host=' + encodeURIComponent(hostId);
     return sendJson(res, 200, {
       ok: true, sessionId: sid, token: pairing.token, exp: pairing.exp, role: pairing.role,
       path: path,
       roomCode: sid,
+      hostId: hostId || null,
     });
   }
   // SSE live session events
@@ -1013,7 +1021,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.4.2 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.4.3 running on 0.0.0.0:' + PORT);
   });
 }
 

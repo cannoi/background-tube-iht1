@@ -1,4 +1,7 @@
-import { ensureSession, getSessionInfo, tryAutoJoinFromUrl, publishLocalState, joinSession } from './session.js';
+import {
+  ensureSession, getSessionInfo, tryAutoJoinFromUrl, publishLocalState,
+  joinSession, claimHostForced, getClientId
+} from './session.js';
 
 export function initRemoteUI() {
   tryAutoJoinFromUrl().then((sid) => {
@@ -33,16 +36,23 @@ async function getPublicBase() {
 
 async function createPair(role) {
   try {
-    // Shared room only
-    const sid = await ensureSession();
+    await ensureSession();
+    // QR creator becomes HOST
+    await claimHostForced();
+    const hostId = getClientId();
+    const info = getSessionInfo();
+    const sid = info.sessionId;
     const pair = await fetch('/api/remote/pair', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: sid, role }),
+      body: JSON.stringify({ sessionId: sid, role, hostId, clientId: hostId }),
     }).then((r) => r.json());
     const base = await getPublicBase();
     const room = pair.sessionId || pair.roomCode || sid;
-    const path = pair.path || ('/?s=' + encodeURIComponent(room) + '&sync=1' + (pair.token ? '&t=' + encodeURIComponent(pair.token) + '&r=' + encodeURIComponent(role) : ''));
+    const path = pair.path || (
+      '/?s=' + encodeURIComponent(room) + '&sync=1&host=' + encodeURIComponent(hostId)
+      + (pair.token ? '&t=' + encodeURIComponent(pair.token) + '&r=' + encodeURIComponent(role) : '')
+    );
     const url = base + path;
     const box = document.getElementById('qrBox');
     const urlEl = document.getElementById('qrUrl');
@@ -51,10 +61,10 @@ async function createPair(role) {
       box.innerHTML =
         '<img src="' + qrImg + '" alt="QR" width="200" height="200" loading="lazy" />' +
         '<div style="margin-top:8px;font-size:11px;color:#111;word-break:break-all">' +
-        '<strong>ROOM ' + String(room).slice(0, 12) + '</strong><br>' +
+        '<strong>HOST · ROOM ' + String(room).slice(0, 12) + '</strong><br>' +
         url.replace(/</g, '&lt;') + '</div>';
     }
-    if (urlEl) urlEl.textContent = 'Room ' + room + ' · ' + url;
+    if (urlEl) urlEl.textContent = 'HOST ' + String(hostId).slice(0, 8) + ' · Room ' + room + ' · ' + url;
     await publishLocalState();
   } catch (e) {
     alert('Pairing failed: ' + (e.message || e));
