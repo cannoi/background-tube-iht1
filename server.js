@@ -32,18 +32,23 @@ const MIME = {
 const adapter = require('./lib/app-adapter');
 const musicEngine = require('./lib/music-engine');
 const sessionManager = require('./lib/session-manager');
-const { createAIService } = require('./lib/ai-module/server/ai-service');
-const { createFeedbackService } = require('./lib/feedback-module/server/feedback-service');
+const { createAIService } = require('./lib/ai-module/ai-service');
+const { createFeedbackService } = require('./lib/feedback-module/feedback-service');
 
 const ai = createAIService({ dataDir: DATA_DIR, appName: 'Background Tube', adapter });
-const feedback = createFeedbackService({
-  hubId: process.env.SHFH_HUB_ID || 'SHFH-CANNOI-0905428801',
-  baseUrl: process.env.SHFH_BASE_URL || 'http://14.176.78.46:8090',
-  ingestToken: process.env.SHFH_INGEST_TOKEN || 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
+const fbOpts = {
   appId: 'background-tube',
   appName: 'Background Tube',
   version: '1.2.0',
-});
+  hubId: 'SHFH-CANNOI-0905428801',
+  baseUrl: 'http://14.176.78.46:8090',
+  ingestToken: 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
+};
+if (process.env.SHFH_HUB_ID) fbOpts.hubId = process.env.SHFH_HUB_ID;
+if (process.env.SHFH_HUB_URL) fbOpts.baseUrl = process.env.SHFH_HUB_URL;
+if (process.env.SHFH_BASE_URL) fbOpts.baseUrl = process.env.SHFH_BASE_URL;
+if (process.env.SHFH_INGEST_TOKEN) fbOpts.ingestToken = process.env.SHFH_INGEST_TOKEN;
+const feedback = createFeedbackService(fbOpts);
 
 const rateMap = new Map();
 function rateLimit(key, max, windowMs) {
