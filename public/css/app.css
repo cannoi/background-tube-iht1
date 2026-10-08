@@ -483,3 +483,57 @@ button { color: inherit; }
   transition: left .18s ease;
 }
 .switch.on::after { left: 21px; }
+
+
+/* Explicit light (default tokens already light on :root) */
+html.light {
+  color-scheme: light;
+}
+
+/* Rainbow — elegant multi-hue dark */
+html.rainbow {
+  --bg: #0d0618;
+  --bg-elev: #1a1030;
+  --bg-soft: #241848;
+  --ink: #f8f0ff;
+  --muted: #c4b0d8;
+  --line: #3d2a5c;
+  --brand: #ff6bcb;
+  --brand-2: #7c5cff;
+  --ok: #3ddea0;
+  --warn: #ffc14d;
+  --danger: #ff6b8a;
+  --shadow: 0 18px 50px rgba(80, 20, 120, 0.4);
+  color-scheme: dark;
+}
+html.rainbow body {
+  background:
+    radial-gradient(1000px 480px at 0% -5%, rgba(255, 107, 203, 0.22), transparent 55%),
+    radial-gradient(900px 420px at 100% 0%, rgba(124, 92, 255, 0.2), transparent 50%),
+    radial-gradient(700px 360px at 50% 100%, rgba(61, 222, 160, 0.08), transparent 45%),
+    var(--bg);
+}
+html.rainbow .logo {
+  background: linear-gradient(135deg, #ff6bcb, #7c5cff, #3ddea0);
+  box-shadow: 0 8px 22px rgba(255, 107, 203, 0.35);
+}
+html.rainbow .nav-btn.active,
+html.rainbow .primary {
+  background: linear-gradient(135deg, #ff6bcb, #7c5cff);
+}
+
+/* Touch & readability polish */
+.choice[aria-pressed="true"] {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(212, 83, 106, 0.25);
+}
+.panel {
+  backdrop-filter: blur(8px);
+}
+.track:active {
+  transform: scale(0.99);
+}
+.mini {
+  backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+}

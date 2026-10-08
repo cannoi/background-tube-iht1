@@ -1,26 +1,44 @@
 import { getSettings, updateSettings } from './settings.js';
 
+const THEMES = ['dark', 'light', 'rainbow'];
+
 function systemDark() {
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
 export function applyTheme(theme = getSettings().theme) {
-  const mode = theme === 'system' ? (systemDark() ? 'dark' : 'light') : theme;
-  document.documentElement.classList.toggle('dark', mode === 'dark');
-  document.documentElement.dataset.theme = mode;
-  document.documentElement.style.colorScheme = mode;
+  let mode = theme || 'dark';
+  if (mode === 'system') mode = systemDark() ? 'dark' : 'light';
+  if (!THEMES.includes(mode) && mode !== 'system') mode = 'dark';
+
+  const root = document.documentElement;
+  root.classList.remove('dark', 'light', 'rainbow');
+  if (mode === 'dark') root.classList.add('dark');
+  else if (mode === 'rainbow') root.classList.add('rainbow');
+  else root.classList.add('light');
+
+  root.dataset.theme = mode;
+  root.style.colorScheme = mode === 'light' ? 'light' : 'dark';
+
+  try {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute('content', mode === 'light' ? '#fffaf6' : mode === 'rainbow' ? '#1a0a2e' : '#120e16');
+    }
+  } catch (_) {}
 }
 
 export function setTheme(theme) {
-  updateSettings({ theme });
-  applyTheme(theme);
+  const t = THEMES.includes(theme) ? theme : 'dark';
+  updateSettings({ theme: t });
+  applyTheme(t);
 }
 
 export function initTheme() {
-  applyTheme();
-  if (window.matchMedia) {
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-      if (getSettings().theme === 'system') applyTheme('system');
-    });
+  // First visit / missing → dark
+  const s = getSettings();
+  if (!s.theme || s.theme === 'system') {
+    updateSettings({ theme: 'dark' });
   }
+  applyTheme(getSettings().theme);
 }

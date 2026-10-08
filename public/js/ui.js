@@ -284,8 +284,8 @@ export function renderSettings() {
     <div class="panel">
       <strong>Theme</strong>
       <div class="choices" style="margin-top:10px">
-        ${['system', 'light', 'dark'].map((theme) => `
-          <button class="choice" data-theme="${theme}" aria-pressed="${s.theme === theme}">${theme}</button>
+        ${[['dark','Dark'],['light','Light'],['rainbow','Rainbow']].map(([theme,label]) => `
+          <button class="choice" data-theme="${theme}" aria-pressed="${s.theme === theme}"><i class="fa-solid ${theme==='dark'?'fa-moon':theme==='light'?'fa-sun':'fa-palette'}"></i> ${label}</button>
         `).join('')}
       </div>
     </div>
@@ -313,7 +313,7 @@ export function renderSettings() {
 
     <div class="panel">
       <strong>About</strong>
-      <p class="muted">Background ❤️ Tube 1.2.0 — mobile-first discovery player. Search via YouTube Data API v3. Playback via YouTube IFrame Player API.</p>
+      <p class="muted">Background ❤️ Tube 1.4.1 — mobile-first discovery player. Search via YouTube Data API v3. Playback via YouTube IFrame Player API.</p>
     </div>
 
     <div class="panel">

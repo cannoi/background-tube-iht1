@@ -1,7 +1,7 @@
 import { getStorage, setStorage } from './storage.js';
 
 const DEFAULTS = {
-  theme: 'system',
+  theme: 'dark',
   autoplay: true,
   repeat: 'off',
   shuffle: false,

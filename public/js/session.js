@@ -33,9 +33,19 @@ let onStateCb = null;
 let serverOnline = true;
 let lastTrackId = null;
 let reconnectAttempts = 0;
+let roomLeaderId = null;
+
+export function isRoomHost() {
+  return !!(roomLeaderId && roomLeaderId === CLIENT_ID);
+}
+
+function updateLeaderFromState(state) {
+  if (state && state.leaderId) roomLeaderId = state.leaderId;
+}
+
 
 export function getSessionInfo() {
-  return { sessionId, token, role, clientId: CLIENT_ID, online: serverOnline };
+  return { sessionId, token, role, clientId: CLIENT_ID, online: serverOnline, leaderId: roomLeaderId, isHost: isRoomHost() };
 }
 
 export function onSessionState(fn) {
@@ -80,8 +90,11 @@ function setOnlineUi(online) {
     }
     if (online) {
       el.className = 'bt-sync-status on';
+      const roleTag = roomLeaderId
+        ? (roomLeaderId === CLIENT_ID ? 'HOST' : 'GUEST')
+        : '…';
       el.textContent = isSyncEnabled()
-        ? ('Sync ON · ' + (sessionId ? sessionId.slice(0, 6) : '…'))
+        ? ('Sync · ' + roleTag + ' · ' + (sessionId ? sessionId.slice(0, 6) : ''))
         : 'Sync OFF';
     } else {
       el.className = 'bt-sync-status off';
@@ -105,8 +118,19 @@ export async function ensureSession() {
       // Apply server snapshot (another device may already be playing)
       try {
         const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
-        if (snap && snap.state) applyRemoteState(snap.state, true);
+        if (snap && snap.state) {
+          updateLeaderFromState(snap.state);
+          applyRemoteState(snap.state, true);
+        }
       } catch (_) {}
+      // If no leader yet, claim host (first device / room creator)
+      if (!roomLeaderId || roomLeaderId === CLIENT_ID) {
+        try {
+          const claim = await pushCommand({ type: 'claim_host' });
+          if (claim && claim.state) updateLeaderFromState(claim.state);
+        } catch (_) {}
+        await publishLocalState().catch(() => {});
+      }
       setOnlineUi(true);
       reconnectAttempts = 0;
       return sessionId;
@@ -228,6 +252,8 @@ function startHeartbeat() {
   clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(() => {
     if (!sessionId || applyingRemote) return;
+    // Only the room host maintains the timeline clock
+    if (roomLeaderId && roomLeaderId !== CLIENT_ID) return;
     const p = getPlayerState();
     const payload = {
       type: 'heartbeat',
@@ -265,12 +291,16 @@ export async function pushCommand(cmd) {
   }
 }
 
-/** Push full local player snapshot as authoritative load */
+/** Push full local player snapshot — HOST ONLY (followers never rewrite host timeline) */
 export async function publishLocalState() {
   if (applyingRemote) return;
   if (!sessionId) {
     await ensureSession();
     if (!sessionId) return;
+  }
+  // Followers must not push load snapshots (reconnect/latency would seek the host)
+  if (roomLeaderId && roomLeaderId !== CLIENT_ID) {
+    return;
   }
   const p = getPlayerState();
   lastTrackId = p.active && p.active.videoId;
@@ -292,11 +322,21 @@ export async function publishLocalState() {
  */
 function applyRemoteState(state, force) {
   if (!state) return;
-  // When syncing room, accept state even if sessionId string differs after reconnect
   if (state.sessionId && sessionId && state.sessionId !== sessionId && !force) {
-    // Switch to server's room id
     sessionId = state.sessionId;
   }
+  updateLeaderFromState(state);
+
+  // Host keeps local clock: do not seek/pause self from follower-originated echoes
+  const amHost = roomLeaderId && roomLeaderId === CLIENT_ID;
+  if (amHost && !force) {
+    // Still track version for commands; timeline stays local on host machine
+    if (state.version != null) lastVersion = Math.max(lastVersion, state.version);
+    if (onStateCb) onStateCb(state);
+    setOnlineUi(true);
+    return;
+  }
+
   if (!force && state.version != null && state.version < lastVersion) return;
   if (state.version != null) lastVersion = Math.max(lastVersion, state.version);
   if (onStateCb) onStateCb(state);
@@ -327,6 +367,7 @@ function applyRemoteState(state, force) {
       try { pausePlayer(); } catch (_) {}
     }
 
+    // Follow host position (clients only) — threshold avoids jitter
     if (state.position != null && Math.abs((p2.currentTime || 0) - state.position) > 2.5) {
       try { seekTo(state.position); } catch (_) {}
     }
@@ -399,7 +440,11 @@ export function onLocalTrackMaybeChanged() {
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      ensureSession().then(() => publishLocalState().catch(() => {})).catch(() => {});
+      ensureSession().then(() => {
+        if (isRoomHost()) return publishLocalState();
+        // Follower: request snapshot only — never push timeline
+        return pushCommand({ type: 'sync.request' });
+      }).catch(() => {});
     }
   });
 }
