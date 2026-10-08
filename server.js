@@ -39,7 +39,7 @@ const ai = createAIService({ dataDir: DATA_DIR, appName: 'Background Tube', adap
 const fbOpts = {
   appId: 'background-tube',
   appName: 'Background Tube',
-  version: '1.2.0',
+  version: '1.2.2',
   hubId: 'SHFH-CANNOI-0905428801',
   baseUrl: 'http://14.176.78.46:8090',
   ingestToken: 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
@@ -430,7 +430,7 @@ async function handleMusicAI(body, res) {
     } catch (e) { console.error('fallback search:', e.message); }
   }
 
-  items = items.map((it) => Object.assign({}, it, { _score: musicEngine.scoreItem(it, { mood: intent.mood }) })).sort((a, b) => (b._score || 0) - (a._score || 0));
+  items = musicEngine.rankWithTrends(items, { mood: intent.mood, region: intent.region || REGION });
 
   sendJson(res, 200, {
     ok: true, intent,
@@ -456,7 +456,7 @@ async function handleRequest(req, res) {
   }
 
   if (url.pathname === '/health' && req.method === 'GET') {
-    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.2.0', timestamp: new Date().toISOString() });
+    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.2.2', timestamp: new Date().toISOString() });
   }
 
   if (url.pathname === '/api/config-status' && req.method === 'GET') {
@@ -580,7 +580,7 @@ async function handleRequest(req, res) {
     const s = sessionManager.createSession(body.leaderId);
     return sendJson(res, 200, { ok: true, state: sessionManager.publicState(s) });
   }
-  if (url.pathname.startsWith('/api/session/') && req.method === 'GET' && !url.pathname.includes('/command') && !url.pathname.includes('/join')) {
+  if (url.pathname.startsWith('/api/session/') && req.method === 'GET' && !url.pathname.includes('/command') && !url.pathname.includes('/join') && !url.pathname.includes('/events')) {
     const sid = url.pathname.split('/')[3];
     const s = sessionManager.getSession(sid);
     if (!s) return sendJson(res, 404, { ok: false, error: 'session_not_found' });
@@ -621,6 +621,35 @@ async function handleRequest(req, res) {
       path: '/remote?s=' + sid + '&t=' + pairing.token + '&r=' + pairing.role
     });
   }
+  // SSE live session events
+  if (url.pathname.match(/^\/api\/session\/[^/]+\/events$/) && req.method === 'GET') {
+    const sid = url.pathname.split('/')[3];
+    const clientId = String(url.searchParams.get('clientId') || sessionManager.id());
+    const token = url.searchParams.get('token');
+    if (token) {
+      const tok = sessionManager.validateToken(token);
+      if (!tok || tok.sessionId !== sid) {
+        return sendJson(res, 403, { ok: false, error: 'invalid_token' });
+      }
+    }
+    if (!sessionManager.getSession(sid)) {
+      return sendJson(res, 404, { ok: false, error: 'session_not_found' });
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.write(': ok\n\n');
+    sessionManager.subscribe(sid, res, clientId);
+    const hb = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch (_) { clearInterval(hb); }
+    }, 25000);
+    req.on('close', () => clearInterval(hb));
+    return;
+  }
+
   if (url.pathname === '/api/remote/revoke' && req.method === 'POST') {
     const body = await readBody(req).catch(() => ({}));
     return sendJson(res, 200, { ok: sessionManager.revokeToken(body.token) });
@@ -644,7 +673,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.2.0 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.2.2 running on 0.0.0.0:' + PORT);
   });
 }
 

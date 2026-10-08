@@ -345,6 +345,51 @@ export function bindSeekInteractions() {
   });
 }
 
+
+export function addToQueue(items, { playNext = false } = {}) {
+  const list = (Array.isArray(items) ? items : [items]).filter((i) => i && i.videoId);
+  if (!list.length) return;
+  if (playNext && state.index >= 0) {
+    state.queue.splice(state.index + 1, 0, ...list);
+  } else {
+    list.forEach((item) => {
+      if (!state.queue.some((q) => q.videoId === item.videoId)) state.queue.push(item);
+    });
+  }
+  if (state.queue.length > 100) state.queue = state.queue.slice(-100);
+  saveQueue(state.queue, state.index);
+  setState({ queue: state.queue });
+}
+
+export function removeFromQueue(index) {
+  const i = Number(index);
+  if (Number.isNaN(i) || i < 0 || i >= state.queue.length) return;
+  state.queue.splice(i, 1);
+  if (state.index >= state.queue.length) state.index = state.queue.length - 1;
+  if (state.index >= 0 && state.queue[state.index]) state.active = state.queue[state.index];
+  else { state.active = null; state.index = -1; }
+  saveQueue(state.queue, state.index);
+  setState({ queue: state.queue, index: state.index, active: state.active });
+}
+
+export function clearQueue() {
+  const keep = state.active ? [state.active] : [];
+  state.queue = keep;
+  state.index = keep.length ? 0 : -1;
+  saveQueue(state.queue, state.index);
+  setState({ queue: state.queue, index: state.index });
+}
+
+export function seekTo(seconds) {
+  const t = Math.max(0, Number(seconds) || 0);
+  if (ytPlayer && typeof ytPlayer.seekTo === 'function') {
+    try { ytPlayer.seekTo(t, true); } catch (_) {}
+  }
+  state.currentTime = t;
+  setState({ currentTime: t });
+  updateSeekUi();
+}
+
 export function initPlayer() {
   ensureIframeApi();
   restoreQueue();

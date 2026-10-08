@@ -1,8 +1,12 @@
 import { initTheme } from './theme.js';
-import { initPlayer, onPlayerChange, getPlayerState, playVideo, togglePlayPause, next, previous, cycleRepeat, toggleShuffle } from './player.js';
+import {
+  initPlayer, onPlayerChange, getPlayerState, playVideo, togglePlayPause,
+  next, previous, cycleRepeat, toggleShuffle, addToQueue, seekTo
+} from './player.js';
 import { initUi, render, renderMini, openPlayer, view, toast } from './ui.js';
 import { initVoiceSearch } from './voice.js';
 import { initRemoteUI } from './remote.js';
+import { ensureSession, notifyLocalAction, publishLocalState, tryAutoJoinFromUrl } from './session.js';
 
 initTheme();
 initPlayer();
@@ -10,11 +14,12 @@ initUi();
 initVoiceSearch();
 initRemoteUI();
 
-// Expose live player state for Universal AI panel (gameContext)
 function syncPlayerGlobal() {
   try { window.__btPlayerState = getPlayerState(); } catch (_) {}
 }
 syncPlayerGlobal();
+
+let lastNotify = 0;
 onPlayerChange(() => {
   syncPlayerGlobal();
   renderMini();
@@ -33,28 +38,47 @@ onPlayerChange(() => {
       if (p.error) err.textContent = p.error.message;
     }
   }
+  // Throttle session publish for multi-window
+  const now = Date.now();
+  if (now - lastNotify > 1500) {
+    lastNotify = now;
+    publishLocalState().catch(() => {});
+  }
 });
 
-// AI panel music actions (from public/ai-panel.js)
 window.addEventListener('bt-ai-action', (ev) => {
   const d = ev.detail || {};
   const name = d.name;
   try {
-    if (name === 'next') next();
-    else if (name === 'previous') previous();
-    else if (name === 'toggle') togglePlayPause();
-    else if (name === 'pause') { if (getPlayerState().playing) togglePlayPause(); }
-    else if (name === 'play') { if (!getPlayerState().playing) togglePlayPause(); }
-    else if (name === 'shuffle') toggleShuffle();
-    else if (name === 'repeat') cycleRepeat();
+    if (name === 'next') { next(); notifyLocalAction('next'); }
+    else if (name === 'previous') { previous(); notifyLocalAction('previous'); }
+    else if (name === 'toggle') { togglePlayPause(); notifyLocalAction('toggle'); }
+    else if (name === 'pause') {
+      if (getPlayerState().playing) togglePlayPause();
+      notifyLocalAction('pause');
+    }
+    else if (name === 'play') {
+      if (!getPlayerState().playing) togglePlayPause();
+      notifyLocalAction('play');
+    }
+    else if (name === 'shuffle') { toggleShuffle(); notifyLocalAction('shuffle'); }
+    else if (name === 'repeat') { cycleRepeat(); notifyLocalAction('repeat'); }
+    else if (name === 'seek' && d.args) { seekTo(d.args.seconds || d.args.position); notifyLocalAction('seek', { position: d.args.seconds }); }
     else if ((name === 'queue_add' || name === 'play_next') && d.items && d.items[0]) {
+      if (name === 'play_next') addToQueue(d.items, { playNext: true });
       playVideo(d.items[0], d.items);
       try { toast('AI: ' + d.items.length + ' track(s)'); } catch (_) {}
+      publishLocalState().catch(() => {});
     }
   } catch (e) {
     console.warn('bt-ai-action', e);
   }
 });
+
+// Optional: create session early so QR is fast
+tryAutoJoinFromUrl().then((sid) => {
+  if (!sid) ensureSession().catch(() => {});
+}).catch(() => ensureSession().catch(() => {}));
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});

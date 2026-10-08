@@ -148,6 +148,35 @@ async function run() {
     const css = await request(server, '/css/app.css');
     assert.strictEqual(css.status, 200);
 
+    
+  // Session SSE subscribe exists
+  const sess2 = await request(server, '/api/session', 'POST', {});
+  const sid2 = sess2.json.state.sessionId;
+  const cmdLoad = await request(server, '/api/session/' + sid2 + '/command', 'POST', {
+    type: 'load',
+    track: { videoId: 'dQw4w9WgXcQ', title: 'Test' },
+    queue: [{ videoId: 'dQw4w9WgXcQ', title: 'Test' }],
+    index: 0,
+    playing: true,
+    position: 5
+  });
+  assert.ok(cmdLoad.json.ok);
+  assert.strictEqual(cmdLoad.json.state.playing, true);
+  assert.strictEqual(cmdLoad.json.state.track.videoId, 'dQw4w9WgXcQ');
+
+  // Music engine known + rank
+  assert.ok(typeof music.rankWithTrends === 'function');
+  const ranked = music.rankWithTrends([
+    { videoId: 'a', title: 'x', channelTitle: 'y' },
+    { videoId: 'b', title: 'z', channelTitle: 'w' }
+  ], { mood: 'relax' });
+  assert.ok(Array.isArray(ranked));
+
+  // Preference weights order documented
+  const pref = music.getPreferences();
+  assert.ok(pref.weights.personalPreference >= pref.weights.localTrend);
+  assert.ok(pref.weights.localTrend >= pref.weights.globalTrend);
+
     console.log('All tests passed');
   } finally {
     server.close();

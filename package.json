@@ -1,6 +1,6 @@
 {
   "name": "background-tube",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "Lightweight AI music player + YouTube discovery + remote + karaoke (SoloHost).",
   "main": "server.js",
   "scripts": {
