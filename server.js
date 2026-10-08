@@ -836,15 +836,20 @@ async function handleRequest(req, res) {
     if (!rateLimit('pair:' + ip, 20, 60000)) return sendJson(res, 429, { ok: false, error: 'rate_limited' });
     const body = await readBody(req).catch(() => ({}));
     let sid = body.sessionId;
+    // Prefer existing session; otherwise ALWAYS the shared default room (never a random private room)
     if (!sid || !sessionManager.getSession(sid)) {
-      const s = sessionManager.createSession(body.leaderId);
-      sid = s.sessionId;
+      const room = sessionManager.getDefaultRoom();
+      sid = room.sessionId;
     }
+    sessionManager.joinSession(sid, body.clientId || sessionManager.id());
     const pairing = sessionManager.createPairingToken(sid, body.role || 'remote');
     if (!pairing) return sendJson(res, 400, { ok: false, error: 'pair_failed' });
+    // Path loads main app index with room id — /remote is not a separate page
+    const path = '/?s=' + encodeURIComponent(sid) + '&t=' + encodeURIComponent(pairing.token) + '&r=' + encodeURIComponent(pairing.role || 'remote') + '&sync=1';
     return sendJson(res, 200, {
       ok: true, sessionId: sid, token: pairing.token, exp: pairing.exp, role: pairing.role,
-      path: '/remote?s=' + sid + '&t=' + pairing.token + '&r=' + pairing.role
+      path: path,
+      roomCode: sid,
     });
   }
   // SSE live session events
@@ -899,7 +904,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.3.0 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.3.1 running on 0.0.0.0:' + PORT);
   });
 }
 

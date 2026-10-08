@@ -153,14 +153,27 @@ export async function joinSession(sid, tok, r) {
   sessionId = sid;
   token = tok || null;
   role = r || 'remote';
-  await api('/api/session/' + encodeURIComponent(sid) + '/join', 'POST', { clientId: CLIENT_ID, token });
-  try { localStorage.setItem('bt_session_id', sessionId); } catch (_) {}
+  try {
+    localStorage.setItem('bt_sync_enabled', '1');
+    localStorage.setItem('bt_session_id', sessionId);
+  } catch (_) {}
+  try {
+    await api('/api/session/' + encodeURIComponent(sid) + '/join', 'POST', { clientId: CLIENT_ID, token });
+  } catch (e) {
+    // Room may not exist yet — fall back to shared default room, then still use returned id if server maps it
+    console.warn('[session] join failed, trying shared room', e.message || e);
+    try {
+      const out = await api('/api/session/room', 'POST', { clientId: CLIENT_ID });
+      sessionId = out.sessionId || sid;
+    } catch (_) {}
+  }
   connectEvents();
   startHeartbeat();
   try {
     const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
     if (snap && snap.state) applyRemoteState(snap.state, true);
   } catch (_) {}
+  setOnlineUi(true);
   return sessionId;
 }
 
@@ -345,7 +358,28 @@ export function tryAutoJoinFromUrl() {
     const s = u.searchParams.get('s');
     const t = u.searchParams.get('t');
     const r = u.searchParams.get('r');
-    if (s) return joinSession(s, t, r || 'remote');
+    const sync = u.searchParams.get('sync');
+    if (s) {
+      // QR / link carries the room code — force sync ON and join THAT room
+      try {
+        localStorage.setItem('bt_sync_enabled', '1');
+        localStorage.setItem('bt_session_id', s);
+      } catch (_) {}
+      console.info('[session] joining room from URL', s);
+      return joinSession(s, t, r || 'remote').then(async (sid) => {
+        // Stay on this room; do not let a later ensureSession switch rooms
+        sessionId = sid || s;
+        try {
+          // Clean query from address bar without reload (optional)
+          if (sync === '1' || t) {
+            const clean = location.pathname || '/';
+            history.replaceState({}, '', clean);
+          }
+        } catch (_) {}
+        await publishLocalState().catch(() => {});
+        return sessionId;
+      });
+    }
   } catch (_) {}
   return Promise.resolve(null);
 }

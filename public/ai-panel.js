@@ -161,14 +161,20 @@ async function ensureRemoteCard() {
     const [pub, pair] = await Promise.all([
       fetch('/api/public-url').then(r => r.json()).catch(() => ({})),
       (async () => {
-        // ensure session then pair
+        // ALWAYS shared room — never POST /api/session (that created a private room)
         let sid = null;
         try {
-          const s = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
-          sid = s.state && s.state.sessionId;
-          try { localStorage.setItem('bt_session_id', sid); } catch (e) {}
-        } catch (e) {}
-        if (!sid) return null;
+          const room = await fetch('/api/session/room', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ clientId: localStorage.getItem('bt_client_id') || 'ai-panel' })
+          }).then(r => r.json());
+          sid = room.sessionId || (room.state && room.state.sessionId);
+          try {
+            localStorage.setItem('bt_session_id', sid);
+            localStorage.setItem('bt_sync_enabled', '1');
+          } catch (e) {}
+        } catch (e) { console.warn('[remote] room', e); }
         const p = await fetch('/api/remote/pair', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -178,20 +184,28 @@ async function ensureRemoteCard() {
       })()
     ]);
     const base = (pub && pub.baseUrl) ? String(pub.baseUrl).replace(/\/$/, '') : (location.origin || '');
-    const path = (pair && pair.path) ? pair.path : '';
+    const roomCode = (pair && (pair.roomCode || pair.sessionId)) || '';
+    // Prefer server path (includes ?s=room); fallback builds same shape
+    let path = (pair && pair.path) ? pair.path : '';
+    if (!path && roomCode) {
+      path = '/?s=' + encodeURIComponent(roomCode) + '&sync=1';
+      if (pair && pair.token) path += '&t=' + encodeURIComponent(pair.token) + '&r=remote';
+    }
     const url = path ? (base + path) : base;
     const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=' + encodeURIComponent(url);
     card.innerHTML =
-      '<div class="ai-remote-title"><i class="fa-solid fa-qrcode"></i> Remote · same session</div>' +
-      '<p class="ai-remote-help">Scan QR or open the URL on your phone to control this player (play / pause / next · same track).</p>' +
+      '<div class="ai-remote-title"><i class="fa-solid fa-qrcode"></i> Remote · room <code>' + String(roomCode).slice(0, 12) + '</code></div>' +
+      '<p class="ai-remote-help">Scan QR or open URL — joins the <strong>same room code</strong> and plays the same track.</p>' +
       '<div class="ai-remote-qr"><img src="' + qr + '" width="160" height="160" alt="QR Remote" loading="lazy"></div>' +
-      '<label class="ai-remote-label">URL</label>' +
-      '<input type="text" class="ai-remote-url" readonly value="' + String(url).replace(/"/g, '&quot;') + '" onclick="this.select()">' +
+      '<label class="ai-remote-label">Room code</label>' +
+      '<input type="text" class="ai-remote-url" readonly value="' + String(roomCode).replace(/"/g, '&quot;') + '" onclick="this.select()">' +
+      '<label class="ai-remote-label">URL (has room id)</label>' +
+      '<input type="text" class="ai-remote-url" id="aiRemoteUrlInput" readonly value="' + String(url).replace(/"/g, '&quot;') + '" onclick="this.select()">' +
       '<div class="ai-remote-actions">' +
       '<button type="button" class="ai-remote-copy" id="aiRemoteCopy">Copy URL</button>' +
       '<button type="button" class="ai-remote-refresh" id="aiRemoteRefresh">Refresh</button>' +
       '</div>' +
-      '<p class="ai-remote-note">Uses public IP:port (SoloHost). Token expires ~15 min. No API keys in the link.</p>' +
+      '<p class="ai-remote-note">QR embeds room code. Token ~15 min. No API keys in the link.</p>' +
       '<label class="ai-sync-row"><input type="checkbox" id="aiSyncToggle" ' + (localStorage.getItem('bt_sync_enabled') === '0' ? '' : 'checked') + '> <span>Sync all devices (same track)</span></label>';
     document.getElementById('aiRemoteCopy')?.addEventListener('click', async () => {
       try {

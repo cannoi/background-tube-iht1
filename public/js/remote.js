@@ -2,7 +2,7 @@ import { ensureSession, getSessionInfo, tryAutoJoinFromUrl, publishLocalState, j
 
 export function initRemoteUI() {
   tryAutoJoinFromUrl().then((sid) => {
-    if (sid) console.info('[session] joined', sid);
+    if (sid) console.info('[session] joined from URL', sid);
   }).catch(() => {});
 
   document.addEventListener('click', async (e) => {
@@ -33,6 +33,7 @@ async function getPublicBase() {
 
 async function createPair(role) {
   try {
+    // Shared room only
     const sid = await ensureSession();
     const pair = await fetch('/api/remote/pair', {
       method: 'POST',
@@ -40,20 +41,20 @@ async function createPair(role) {
       body: JSON.stringify({ sessionId: sid, role }),
     }).then((r) => r.json());
     const base = await getPublicBase();
-    const path = pair.path || ('/remote?s=' + sid + '&t=' + pair.token + '&r=' + role);
+    const room = pair.sessionId || pair.roomCode || sid;
+    const path = pair.path || ('/?s=' + encodeURIComponent(room) + '&sync=1' + (pair.token ? '&t=' + encodeURIComponent(pair.token) + '&r=' + encodeURIComponent(role) : ''));
     const url = base + path;
     const box = document.getElementById('qrBox');
     const urlEl = document.getElementById('qrUrl');
     if (box) {
-      // QR image via public chart API-free: use qrserver (http) or text fallback
       const qrImg = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(url);
       box.innerHTML =
         '<img src="' + qrImg + '" alt="QR" width="200" height="200" loading="lazy" />' +
         '<div style="margin-top:8px;font-size:11px;color:#111;word-break:break-all">' +
-        '<strong>' + (role === 'player' ? 'PLAYER' : 'REMOTE') + '</strong><br>' +
+        '<strong>ROOM ' + String(room).slice(0, 12) + '</strong><br>' +
         url.replace(/</g, '&lt;') + '</div>';
     }
-    if (urlEl) urlEl.textContent = url + ' · expires ~15 min · same session';
+    if (urlEl) urlEl.textContent = 'Room ' + room + ' · ' + url;
     await publishLocalState();
   } catch (e) {
     alert('Pairing failed: ' + (e.message || e));

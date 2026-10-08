@@ -147,12 +147,13 @@ window.addEventListener('bt-ai-action', (ev) => {
 });
 
 tryAutoJoinFromUrl().then((sid) => {
-  if (!sid) return ensureSession();
-  return sid;
-}).then(() => {
-  // Push local state after join so room has something; peers receive via SSE
-  return publishLocalState().catch(() => {});
-}).catch(() => ensureSession().then(() => publishLocalState()).catch(() => {}));
+  if (sid) {
+    console.info('[main] using room from QR/URL', sid);
+    return sid;
+  }
+  return ensureSession();
+}).then(() => publishLocalState().catch(() => {}))
+  .catch(() => ensureSession().then(() => publishLocalState()).catch(() => {}));
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
