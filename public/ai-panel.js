@@ -134,6 +134,75 @@ async function runMusicAI(message) {
 }
 
 
+
+/** Remote pair card — public IP:port for SoloHost phones */
+let remoteCardReady = false;
+async function ensureRemoteCard() {
+  if (!aiChat) return;
+  let card = document.getElementById('aiRemoteCard');
+  if (!card) {
+    card = document.createElement('div');
+    card.id = 'aiRemoteCard';
+    card.className = 'ai-remote-card';
+    aiChat.insertBefore(card, aiChat.firstChild);
+  }
+  card.innerHTML = '<div class="ai-remote-loading">Loading remote link…</div>';
+  try {
+    const [pub, pair] = await Promise.all([
+      fetch('/api/public-url').then(r => r.json()).catch(() => ({})),
+      (async () => {
+        // ensure session then pair
+        let sid = null;
+        try {
+          const s = await fetch('/api/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json());
+          sid = s.state && s.state.sessionId;
+          try { localStorage.setItem('bt_session_id', sid); } catch (e) {}
+        } catch (e) {}
+        if (!sid) return null;
+        const p = await fetch('/api/remote/pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId: sid, role: 'remote' })
+        }).then(r => r.json());
+        return p;
+      })()
+    ]);
+    const base = (pub && pub.baseUrl) ? String(pub.baseUrl).replace(/\/$/, '') : (location.origin || '');
+    const path = (pair && pair.path) ? pair.path : '';
+    const url = path ? (base + path) : base;
+    const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=' + encodeURIComponent(url);
+    card.innerHTML =
+      '<div class="ai-remote-title"><i class="fa-solid fa-qrcode"></i> Remote · same session</div>' +
+      '<p class="ai-remote-help">Scan QR or open the URL on your phone to control this player (play / pause / next · same track).</p>' +
+      '<div class="ai-remote-qr"><img src="' + qr + '" width="160" height="160" alt="QR Remote" loading="lazy"></div>' +
+      '<label class="ai-remote-label">URL</label>' +
+      '<input type="text" class="ai-remote-url" readonly value="' + String(url).replace(/"/g, '&quot;') + '" onclick="this.select()">' +
+      '<div class="ai-remote-actions">' +
+      '<button type="button" class="ai-remote-copy" id="aiRemoteCopy">Copy URL</button>' +
+      '<button type="button" class="ai-remote-refresh" id="aiRemoteRefresh">Refresh</button>' +
+      '</div>' +
+      '<p class="ai-remote-note">Uses public IP:port (SoloHost). Token expires ~15 min. No API keys in the link.</p>';
+    document.getElementById('aiRemoteCopy')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+        const b = document.getElementById('aiRemoteCopy');
+        if (b) { b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy URL'; }, 1500); }
+      } catch (e) {
+        const inp = card.querySelector('.ai-remote-url');
+        if (inp) { inp.select(); document.execCommand('copy'); }
+      }
+    });
+    document.getElementById('aiRemoteRefresh')?.addEventListener('click', () => {
+      remoteCardReady = false;
+      ensureRemoteCard();
+    });
+    remoteCardReady = true;
+  } catch (e) {
+    card.innerHTML = '<div class="ai-remote-title">Remote</div><p class="ai-remote-help">Could not build pair link. Check network / PUBLIC_BASE_URL.</p>';
+  }
+}
+
+
 const aiChat = document.getElementById('aiChat');
 const aiInput = document.getElementById('aiInput');
 function appendMsg(role, html) {
@@ -152,6 +221,7 @@ const ai = window.UniversalAI.create({
     setFabVisible(false);
     refreshStatus();
     loadSettings();
+    ensureRemoteCard();
   },
   onActions: executeActions
 });
@@ -160,6 +230,7 @@ function closeAIPanel() {
   const ov = document.getElementById('aiOverlay');
   if (ov) ov.hidden = true;
   setFabVisible(true);
+ensureRemoteCard();
 }
 document.getElementById('aiClose')?.addEventListener('click', closeAIPanel);
 document.getElementById('aiOverlay')?.addEventListener('click', e => {
@@ -403,3 +474,4 @@ fb.sync().catch(e => {
 });
 setUnread(0);
 setFabVisible(true);
+ensureRemoteCard();

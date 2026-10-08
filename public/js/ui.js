@@ -356,11 +356,6 @@ function ensurePlayerOverlay() {
         <button class="round main" data-action="toggle" aria-label="Play or pause"><i class="fa-solid fa-play"></i></button>
         <button class="round" data-action="next" aria-label="Next"><i class="fa-solid fa-forward-step"></i></button>
 
-        <div class="player-extra-actions">
-          <button type="button" id="karaokeBtn" data-action="karaoke" title="Karaoke" aria-label="Karaoke"><i class="fa-solid fa-microphone-lines"></i> Karaoke</button>
-          <button type="button" id="qrBtn" data-action="qr" title="QR Remote" aria-label="QR Remote"><i class="fa-solid fa-qrcode"></i> QR</button>
-          <button type="button" data-action="similar" title="Play similar" aria-label="Play similar"><i class="fa-solid fa-wand-magic-sparkles"></i> Similar</button>
-        </div>
         <div id="karaokePanel" class="karaoke-panel" hidden>Lyrics not synced — play official karaoke/instrumental versions from YouTube.</div>
       </div>
       <div class="actions-row">

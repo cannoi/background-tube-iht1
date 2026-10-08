@@ -262,3 +262,72 @@
 @media (max-height: 560px) {
   .ai-fab { transform: scale(0.92); }
 }
+
+/* AI Panel — remote QR card at top of chat */
+.ai-remote-card {
+  margin: 0 0 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.1);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ai-remote-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ai-remote-help { margin: 0 0 10px; opacity: 0.85; }
+.ai-remote-qr {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0;
+  padding: 10px;
+  background: #fff;
+  border-radius: 12px;
+}
+.ai-remote-qr img { display: block; border-radius: 4px; }
+.ai-remote-label {
+  display: block;
+  font-size: 11px;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.ai-remote-url {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(0,0,0,0.35);
+  color: inherit;
+  padding: 8px 10px;
+  font-size: 11px;
+  word-break: break-all;
+}
+.ai-remote-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.ai-remote-actions button {
+  flex: 1;
+  min-height: 36px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--brand, #e74c3c);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ai-remote-actions .ai-remote-refresh {
+  background: rgba(255,255,255,0.12);
+}
+.ai-remote-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  opacity: 0.65;
+}
