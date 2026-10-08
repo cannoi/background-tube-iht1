@@ -422,3 +422,10 @@
 }
 .ai-mic-status.err { color: #ff8a80; }
 .ai-mic-status.ok { color: #81c784; }
+
+.ai-mic-btn.mic-disabled,
+.ai-mic-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: auto; /* still show title / status on click */
+}

@@ -708,21 +708,81 @@ ensureRemoteCard();
     beginRecognition();
   }
 
+  function applyMicAvailability() {
+    const btn = document.getElementById('aiMic');
+    const st = document.getElementById('aiMicStatus');
+    if (!btn) return;
+
+    const secure = isSecureOk();
+    const hasSR = !!SR();
+    const hasGUM = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+
+    console.info('[BT Voice] context', {
+      isSecureContext: !!(window.isSecureContext),
+      protocol: location.protocol,
+      host: location.host,
+      hostname: location.hostname,
+      secureOk: secure,
+      speechRecognition: hasSR,
+      getUserMedia: hasGUM,
+    });
+
+    if (!hasSR) {
+      btn.disabled = true;
+      btn.setAttribute('aria-disabled', 'true');
+      btn.classList.add('mic-disabled');
+      btn.title = 'Voice not supported — type your command';
+      setMicState('unsupported', 'Speech recognition unavailable. Type your command.');
+      console.warn('[BT Voice] SpeechRecognition API missing — mic disabled');
+      return;
+    }
+
+    if (!secure) {
+      // Disable / soft-hide immediately — do not wait for click
+      btn.disabled = true;
+      btn.setAttribute('aria-disabled', 'true');
+      btn.classList.add('mic-disabled');
+      btn.title = 'Microphone needs HTTPS or localhost';
+      btn.style.opacity = '0.45';
+      btn.style.cursor = 'not-allowed';
+      setMicState(
+        'insecure',
+        'Mic unavailable on HTTP. Use HTTPS or localhost. Typing still works.'
+      );
+      console.warn(
+        '[BT Voice] Microphone disabled: page is not a secure context.',
+        'Chrome/Opera block getUserMedia + SpeechRecognition on http://IP.',
+        'Open via https://… or http://localhost / http://127.0.0.1'
+      );
+      return;
+    }
+
+    // Secure context — enable mic
+    btn.disabled = false;
+    btn.removeAttribute('aria-disabled');
+    btn.classList.remove('mic-disabled');
+    btn.style.opacity = '';
+    btn.style.cursor = '';
+    btn.title = 'Voice command';
+    if (st && voiceState === 'insecure') setMicState('idle', '');
+    console.info('[BT Voice] Microphone ready (secure context)');
+  }
+
   function bind() {
     const btn = document.getElementById('aiMic');
-    if (!btn || btn.dataset.voiceBound === '1') return;
+    if (!btn) return;
+    applyMicAvailability();
+    if (btn.dataset.voiceBound === '1') return;
     btn.dataset.voiceBound = '1';
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (!isSecureOk()) {
+        applyMicAvailability();
+        return;
+      }
       startVoiceCommand();
     });
-    if (!SR()) {
-      setMicState('unsupported', '');
-      btn.title = 'Voice not supported — type your command';
-    } else if (!isSecureOk()) {
-      btn.title = 'Needs HTTPS or localhost for microphone';
-    }
   }
 
   if (document.readyState === 'loading') {
@@ -730,7 +790,7 @@ ensureRemoteCard();
   } else {
     bind();
   }
-  // Panel may mount late
-  setTimeout(bind, 500);
-  setTimeout(bind, 2000);
+  // Panel / DOM may appear slightly later
+  setTimeout(bind, 300);
+  setTimeout(bind, 1200);
 })();
