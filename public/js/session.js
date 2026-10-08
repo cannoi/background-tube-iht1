@@ -115,6 +115,7 @@ export async function ensureSession() {
       try { localStorage.setItem('bt_session_id', sessionId); } catch (_) {}
       connectEvents();
       startHeartbeat();
+      startPollBackup();
       // Apply server snapshot (another device may already be playing)
       try {
         const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
@@ -123,13 +124,25 @@ export async function ensureSession() {
           applyRemoteState(snap.state, true);
         }
       } catch (_) {}
-      // If no leader yet, claim host (first device / room creator)
+      // Claim host only if we are (or become) the room host — never steal from an existing host
       if (!roomLeaderId || roomLeaderId === CLIENT_ID) {
         try {
           const claim = await pushCommand({ type: 'claim_host' });
           if (claim && claim.state) updateLeaderFromState(claim.state);
+          if (claim && claim.ok === false) {
+            // Another device is host — pull their state only
+            const snap2 = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
+            if (snap2 && snap2.state) applyRemoteState(snap2.state, true);
+          } else if (isRoomHost()) {
+            await publishLocalState().catch(() => {});
+          }
         } catch (_) {}
-        await publishLocalState().catch(() => {});
+      } else {
+        // Guest: follow host, do not publish timeline
+        try {
+          const snap2 = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
+          if (snap2 && snap2.state) applyRemoteState(snap2.state, true);
+        } catch (_) {}
       }
       setOnlineUi(true);
       reconnectAttempts = 0;
@@ -193,6 +206,7 @@ export async function joinSession(sid, tok, r) {
   }
   connectEvents();
   startHeartbeat();
+  startPollBackup();
   try {
     const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
     if (snap && snap.state) applyRemoteState(snap.state, true);
@@ -200,6 +214,7 @@ export async function joinSession(sid, tok, r) {
   setOnlineUi(true);
   return sessionId;
 }
+
 
 function scheduleReconnect() {
   if (reconnectTimer) return;
@@ -237,6 +252,10 @@ function connectEvents() {
   es.onopen = () => {
     serverOnline = true;
     setOnlineUi(true);
+    // Layer D — on SSE reconnect, pull authoritative snapshot
+    pushCommand({ type: 'sync.request' }).then((out) => {
+      if (out && out.state) applyRemoteState(out.state, true);
+    }).catch(() => {});
   };
 
   es.onerror = () => {
@@ -248,7 +267,23 @@ function connectEvents() {
   };
 }
 
+let pollTimer = null;
+function startPollBackup() {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    if (!sessionId || !isSyncEnabled()) return;
+    try {
+      const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
+      if (snap && snap.state) applyRemoteState(snap.state, false);
+    } catch (_) {
+      setOnlineUi(false);
+      scheduleReconnect();
+    }
+  }, 10000);
+}
+
 function startHeartbeat() {
+
   clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(() => {
     if (!sessionId || applyingRemote) return;
@@ -322,35 +357,32 @@ export async function publishLocalState() {
  */
 function applyRemoteState(state, force) {
   if (!state) return;
-  if (state.sessionId && sessionId && state.sessionId !== sessionId && !force) {
-    sessionId = state.sessionId;
+  if (state.sessionId) {
+    if (!sessionId || (sessionId !== state.sessionId && force)) {
+      sessionId = state.sessionId;
+    } else if (sessionId !== state.sessionId) {
+      sessionId = state.sessionId;
+    }
   }
   updateLeaderFromState(state);
-
-  // Host keeps local clock: do not seek/pause self from follower-originated echoes
-  const amHost = roomLeaderId && roomLeaderId === CLIENT_ID;
-  if (amHost && !force) {
-    // Still track version for commands; timeline stays local on host machine
-    if (state.version != null) lastVersion = Math.max(lastVersion, state.version);
-    if (onStateCb) onStateCb(state);
-    setOnlineUi(true);
-    return;
-  }
-
-  if (!force && state.version != null && state.version < lastVersion) return;
   if (state.version != null) lastVersion = Math.max(lastVersion, state.version);
   if (onStateCb) onStateCb(state);
+  setOnlineUi(true);
+
+  const amHost = !!(roomLeaderId && roomLeaderId === CLIENT_ID);
+  const remoteId = state.track && state.track.videoId;
 
   applyingRemote = true;
   try {
     const p = getPlayerState();
-    const remoteId = state.track && state.track.videoId;
     const localId = p.active && p.active.videoId;
 
+    // Layer A — always align track/queue for guests; host also accepts track changes
+    // (guest remote-control next/play updates server → host must play the new track)
     if (Array.isArray(state.queue) && state.queue.length) {
       const sameQueue =
         p.queue.length === state.queue.length &&
-        p.queue.every((t, i) => t.videoId === (state.queue[i] && state.queue[i].videoId));
+        p.queue.every((t, i) => t && state.queue[i] && t.videoId === state.queue[i].videoId);
       if (!sameQueue) {
         setQueue(state.queue, state.index || 0, false);
       }
@@ -361,22 +393,30 @@ function applyRemoteState(state, force) {
     }
 
     const p2 = getPlayerState();
+    // Layer B — play/pause alignment
     if (state.playing && !p2.playing) {
       try { togglePlayPause(); } catch (_) {}
     } else if (!state.playing && p2.playing) {
       try { pausePlayer(); } catch (_) {}
     }
 
-    // Follow host position (clients only) — threshold avoids jitter
-    if (state.position != null && Math.abs((p2.currentTime || 0) - state.position) > 2.5) {
-      try { seekTo(state.position); } catch (_) {}
+    // Layer C — position: guests follow host clock; host only seeks on force (initial join)
+    // so a lagging guest reconnect never rewinds the host
+    if (state.position != null) {
+      const drift = Math.abs((p2.currentTime || 0) - state.position);
+      if (!amHost && drift > 2.0) {
+        try { seekTo(state.position); } catch (_) {}
+      } else if (amHost && force && drift > 5) {
+        try { seekTo(state.position); } catch (_) {}
+      }
     }
   } catch (e) {
     console.warn('[session] applyRemote', e);
   } finally {
-    setTimeout(() => { applyingRemote = false; }, 500);
+    setTimeout(() => { applyingRemote = false; }, 400);
   }
 }
+
 
 export function notifyLocalAction(type, extra = {}) {
   if (applyingRemote) return;

@@ -7,9 +7,9 @@ function systemDark() {
 }
 
 export function applyTheme(theme = getSettings().theme) {
-  let mode = theme || 'dark';
+  let mode = theme || 'rainbow';
   if (mode === 'system') mode = systemDark() ? 'dark' : 'light';
-  if (!THEMES.includes(mode) && mode !== 'system') mode = 'dark';
+  if (!THEMES.includes(mode)) mode = 'rainbow';
 
   const root = document.documentElement;
   root.classList.remove('dark', 'light', 'rainbow');
@@ -29,16 +29,15 @@ export function applyTheme(theme = getSettings().theme) {
 }
 
 export function setTheme(theme) {
-  const t = THEMES.includes(theme) ? theme : 'dark';
+  const t = THEMES.includes(theme) ? theme : 'rainbow';
   updateSettings({ theme: t });
   applyTheme(t);
 }
 
 export function initTheme() {
-  // First visit / missing → dark
   const s = getSettings();
   if (!s.theme || s.theme === 'system') {
-    updateSettings({ theme: 'dark' });
+    updateSettings({ theme: 'rainbow' });
   }
   applyTheme(getSettings().theme);
 }
