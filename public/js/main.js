@@ -1,10 +1,16 @@
 import { initTheme } from './theme.js';
 import { initPlayer, onPlayerChange, getPlayerState } from './player.js';
 import { initUi, render, renderMini, openPlayer, view } from './ui.js';
+import { initAI } from './ai/boot-ai.js';
+import { initVoiceSearch } from './voice.js';
+import { initRemoteUI } from './remote.js';
 
 initTheme();
 initPlayer();
 initUi();
+initAI();
+initVoiceSearch();
+initRemoteUI();
 
 onPlayerChange(() => {
   renderMini();

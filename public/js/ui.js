@@ -139,10 +139,11 @@ export function renderHome() {
 
 export function renderSearch() {
   return `
-    <form class="search-box" data-action="search-form">
+    <form class="search-box search-row" data-action="search-form">
       <div class="search-wrap">
         <i class="fa-solid fa-magnifying-glass"></i>
         <input id="searchInput" value="${escapeHtml(view.searchQuery)}" placeholder="Song, artist, keyword" enterkeyhint="search" />
+        <button type="button" class="mic-btn" id="voiceSearchBtn" title="Voice search" aria-label="Voice search"><i class="fa-solid fa-microphone"></i></button>
       </div>
       <button class="primary" type="submit">Search</button>
     </form>
@@ -269,7 +270,7 @@ export function renderSettings() {
 
     <div class="panel">
       <strong>About</strong>
-      <p class="muted">Background ❤️ Tube 1.1.0 — mobile-first discovery player. Search via YouTube Data API v3. Playback via YouTube IFrame Player API.</p>
+      <p class="muted">Background ❤️ Tube 1.2.0 — mobile-first discovery player. Search via YouTube Data API v3. Playback via YouTube IFrame Player API.</p>
     </div>
 
     <div class="panel">
@@ -311,6 +312,13 @@ function ensurePlayerOverlay() {
         <button class="round" data-action="prev" aria-label="Previous"><i class="fa-solid fa-backward-step"></i></button>
         <button class="round main" data-action="toggle" aria-label="Play or pause"><i class="fa-solid fa-play"></i></button>
         <button class="round" data-action="next" aria-label="Next"><i class="fa-solid fa-forward-step"></i></button>
+
+        <div class="player-extra-actions">
+          <button type="button" id="karaokeBtn" data-action="karaoke" title="Karaoke" aria-label="Karaoke"><i class="fa-solid fa-microphone-lines"></i> Karaoke</button>
+          <button type="button" id="qrBtn" data-action="qr" title="QR Remote" aria-label="QR Remote"><i class="fa-solid fa-qrcode"></i> QR</button>
+          <button type="button" data-action="similar" title="Play similar" aria-label="Play similar"><i class="fa-solid fa-wand-magic-sparkles"></i> Similar</button>
+        </div>
+        <div id="karaokePanel" class="karaoke-panel" hidden>Lyrics not synced — play official karaoke/instrumental versions from YouTube.</div>
       </div>
       <div class="actions-row">
         <button class="ghost" id="favBtn" data-action="favorite"><i class="fa-solid fa-heart"></i> Favorite</button>
@@ -661,6 +669,24 @@ function onClick(event) {
       break;
     case 'share':
       shareActive();
+      break;
+    case 'similar': {
+      const p = getPlayerState();
+      const q = p.active ? ((p.active.channelTitle || '') + ' ' + (p.active.title || '')).trim() : '';
+      if (!q) { toast('Play a track first'); break; }
+      fetch('/api/music/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: 'songs like ' + q }) })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.items && data.items[0]) playVideo(data.items[0], data.items);
+          toast(data.reply || 'Similar tracks');
+        })
+        .catch(() => toast('Similar failed'));
+      break;
+    }
+    case 'karaoke':
+    case 'qr':
+      // handled by remote.js / global click
+      break;
       break;
     case 'stop':
       stopPlayback();

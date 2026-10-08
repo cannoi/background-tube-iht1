@@ -1,7 +1,7 @@
 {
   "name": "background-tube",
-  "version": "1.1.1",
-  "description": "Lightweight mobile-first music discovery app using official YouTube Data API v3 and IFrame Player API.",
+  "version": "1.2.0",
+  "description": "Lightweight AI music player + YouTube discovery + remote + karaoke (SoloHost).",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

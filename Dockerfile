@@ -1,11 +1,12 @@
 FROM node:18-alpine
 WORKDIR /app
 
-# Zero runtime dependencies. Copy the app as-is so the image
-# builds without touching the npm registry.
+# Zero runtime npm dependencies. Copy the app as-is.
 COPY package.json package-lock.json ./
 COPY server.js ./
+COPY lib ./lib
 COPY public ./public
+COPY tests ./tests
 
 ENV NODE_ENV=production
 ENV PORT=8080

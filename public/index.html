@@ -12,6 +12,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/ai-panel.css">
+  <link rel="stylesheet" href="/css/music-extras.css">
 <style>.paf-made-by{position:fixed;right:8px;bottom:8px;width:min(72px,12vw);max-width:12vw;height:auto;object-fit:contain;opacity:.5;background:transparent;padding:0;border:0;box-shadow:none;filter:none;pointer-events:none;z-index:30}</style></head>
 <body>
   <div class="app-shell">
@@ -56,6 +58,116 @@
   <div id="toast" class="toast"></div>
   
 
+  
+  <!-- AI FAB -->
+  <button type="button" class="ai-fab" id="aiFab" title="AI · Feedback · Settings" aria-label="AI Assistant">
+    <img src="/ai-icon.png" alt="AI" class="ai-fab-img" onerror="this.style.display='none';this.parentElement.innerHTML='🤖'">
+    <span class="ai-fab-dot" id="aiStatusDot"></span>
+    <span class="ai-badge" id="aiBadge" hidden style="display:none"></span>
+  </button>
+
+  <!-- Unified AI Panel -->
+  <div class="panel-overlay" id="aiOverlay" hidden>
+    <div class="panel ai-panel" id="aiPanel">
+      <div class="panel-header">
+        <span class="panel-title">✦ AI Music</span>
+        <button type="button" class="panel-close" id="aiClose" aria-label="Close">×</button>
+      </div>
+      <div class="panel-tabs" id="panelTabs">
+        <button type="button" class="tab active" data-tab="chat">Chat</button>
+        <button type="button" class="tab" data-tab="feedback">Feedback <span class="tab-badge" id="fbTabBadge" hidden></span></button>
+        <button type="button" class="tab" data-tab="settings">Settings</button>
+        <button type="button" class="tab" data-tab="logs">Logs</button>
+      </div>
+      <div class="tab-pane active" id="tab-chat">
+        <div class="panel-body" id="aiChat"></div>
+        <div class="panel-footer">
+          <input type="text" id="aiInput" placeholder="Play chill music, Next, Karaoke…" autocomplete="off" enterkeyhint="send">
+          <button type="button" id="aiSend" aria-label="Send">➤</button>
+        </div>
+        <div class="ai-status-bar" id="aiStatusBar">AI: checking…</div>
+      </div>
+      <div class="tab-pane" id="tab-feedback">
+        <div class="panel-body fb-body">
+          <div id="fbNotices" class="fb-notices"></div>
+          <div id="fbDonate" class="fb-donate" hidden></div>
+          <label class="fb-label">Type</label>
+          <select id="fbType">
+            <option value="improvement">Improvement</option>
+            <option value="bug">Bug</option>
+            <option value="question">Question</option>
+            <option value="playback">Playback issue</option>
+            <option value="ai">AI issue</option>
+            <option value="recommendation">Wrong recommendation</option>
+            <option value="karaoke">Karaoke issue</option>
+            <option value="remote">Remote/sync issue</option>
+          </select>
+          <label class="fb-label">Rating</label>
+          <div class="fb-stars" id="fbStars">
+            <button type="button" data-r="1">★</button>
+            <button type="button" data-r="2">★</button>
+            <button type="button" data-r="3">★</button>
+            <button type="button" data-r="4">★</button>
+            <button type="button" data-r="5">★</button>
+          </div>
+          <label class="fb-label">Message</label>
+          <textarea id="fbMessage" rows="4" placeholder="Describe the issue or idea…"></textarea>
+          <button type="button" id="fbSend" class="fb-send">Send feedback</button>
+          <div id="fbStatus" class="fb-status"></div>
+        </div>
+      </div>
+      <div class="tab-pane" id="tab-settings">
+        <div class="panel-body">
+          <label class="fb-label">Provider</label>
+          <select id="aiProvider"></select>
+          <label class="fb-label">API Key</label>
+          <input type="password" id="aiApiKey" placeholder="••••" autocomplete="off">
+          <label class="fb-label">Base URL (custom/local)</label>
+          <input type="text" id="aiBaseUrl" placeholder="https://…">
+          <label class="fb-label">Model</label>
+          <input type="text" id="aiModel" placeholder="auto">
+          <label class="fb-label">Mode</label>
+          <select id="aiMode">
+            <option value="cloud_enabled">Cloud enabled</option>
+            <option value="balanced">Balanced</option>
+            <option value="prefer_local">Prefer local</option>
+            <option value="local_only">Local only</option>
+            <option value="custom">Custom</option>
+          </select>
+          <div class="ai-settings-actions">
+            <button type="button" id="aiSaveSettings">Save</button>
+            <button type="button" id="aiTestProvider">Check token</button>
+            <button type="button" id="aiRefreshModels">Load models</button>
+          </div>
+          <div id="aiSettingsStatus" class="fb-status"></div>
+        </div>
+      </div>
+      <div class="tab-pane" id="tab-logs">
+        <div class="panel-body" id="aiLogs"></div>
+        <div class="panel-footer">
+          <button type="button" id="aiClearLogs">Clear logs</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="qrModal" class="modal-back" hidden>
+    <div class="qr-card">
+      <h3>QR Remote</h3>
+      <p class="muted">Scan to control as Remote or join as Player. Token expires; no API keys.</p>
+      <div id="qrBox" class="qr-box"></div>
+      <p id="qrUrl" class="qr-url muted"></p>
+      <div class="qr-actions">
+        <button type="button" id="qrRemote">Remote</button>
+        <button type="button" id="qrPlayer">Player</button>
+        <button type="button" id="qrClose">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/ai/ai-module.js"></script>
+  <script src="/js/ai/feedback-module.js"></script>
   <script type="module" src="/js/main.js"></script>
+
 <img class="paf-made-by" src="/made-by.png" alt="Made with App Builder — Pi SoloHost"></body>
 </html>

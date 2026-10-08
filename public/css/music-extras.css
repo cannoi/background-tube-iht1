@@ -1,0 +1,146 @@
+/* Voice mic, karaoke, QR, smart queue extras — additive only */
+
+.search-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.search-row input {
+  flex: 1;
+}
+
+.mic-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid var(--border, #333);
+  background: var(--card, #1a1a1a);
+  color: var(--text, #fff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mic-btn.recording {
+  background: #c0392b;
+  color: #fff;
+  animation: pulse-mic 1s infinite;
+}
+
+@keyframes pulse-mic {
+  50% { opacity: 0.7; }
+}
+
+.player-extra-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.player-extra-actions button {
+  border-radius: 999px;
+  padding: 8px 12px;
+  border: 1px solid var(--border, #333);
+  background: var(--card, #1a1a1a);
+  color: var(--text, #eee);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.player-extra-actions button.active {
+  border-color: var(--brand, #e74c3c);
+  color: var(--brand, #e74c3c);
+}
+
+.karaoke-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(0,0,0,0.35);
+  max-height: 40vh;
+  overflow: auto;
+  font-size: 1.15rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.karaoke-panel.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 350;
+  max-height: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  background: #0a0a0a;
+}
+
+.qr-card {
+  background: var(--card, #1c1c1c);
+  color: var(--text, #fff);
+  border-radius: 16px;
+  padding: 20px;
+  max-width: 360px;
+  margin: 10vh auto;
+  text-align: center;
+}
+
+.qr-box {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border-radius: 12px;
+  margin: 12px 0;
+  color: #111;
+  font-size: 12px;
+  word-break: break-all;
+  padding: 12px;
+}
+
+.qr-url {
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.qr-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.qr-actions button {
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 0;
+  background: var(--brand, #e74c3c);
+  color: #fff;
+  cursor: pointer;
+}
+
+.ai-fab {
+  bottom: 88px !important;
+  z-index: 320;
+}
+
+.panel-overlay {
+  z-index: 400;
+}
+
+.queue-ai-label {
+  font-size: 11px;
+  opacity: 0.7;
+  margin: 8px 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.track.ai-suggested {
+  border-left: 3px solid var(--brand, #e74c3c);
+}
