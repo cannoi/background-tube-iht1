@@ -899,7 +899,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.2.9 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.3.0 running on 0.0.0.0:' + PORT);
   });
 }
 

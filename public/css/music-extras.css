@@ -341,3 +341,28 @@
   cursor: pointer;
 }
 .ai-sync-row input { width: 16px; height: 16px; }
+
+.bt-sync-status {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0.9;
+  max-width: 90vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bt-sync-status.on {
+  background: rgba(30, 120, 60, 0.85);
+  color: #e8ffe8;
+}
+.bt-sync-status.off {
+  background: rgba(140, 40, 40, 0.9);
+  color: #ffe8e8;
+}

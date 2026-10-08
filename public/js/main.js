@@ -8,7 +8,7 @@ import {
 import { initUi, render, renderMini, openPlayer, view, toast } from './ui.js';
 import { initVoiceSearch } from './voice.js';
 import { initRemoteUI } from './remote.js';
-import { ensureSession, notifyLocalAction, publishLocalState, tryAutoJoinFromUrl } from './session.js';
+import { ensureSession, notifyLocalAction, publishLocalState, tryAutoJoinFromUrl, onLocalTrackMaybeChanged } from './session.js';
 
 initTheme();
 initPlayer();
@@ -25,6 +25,8 @@ function syncPlayerGlobal() {
 syncPlayerGlobal();
 
 let lastNotify = 0;
+let lastPublishedTrack = null;
+let lastPublishedPlaying = null;
 onPlayerChange(() => {
   syncPlayerGlobal();
   renderMini();
@@ -43,8 +45,21 @@ onPlayerChange(() => {
       if (p.error) err.textContent = p.error.message;
     }
   }
+  // Immediate sync when track or play/pause changes
+  try {
+    const p = getPlayerState();
+    const tid = p.active && p.active.videoId;
+    if (tid !== lastPublishedTrack || p.playing !== lastPublishedPlaying) {
+      lastPublishedTrack = tid;
+      lastPublishedPlaying = p.playing;
+      lastNotify = Date.now();
+      onLocalTrackMaybeChanged();
+      publishLocalState().catch(() => {});
+      return;
+    }
+  } catch (_) {}
   const now = Date.now();
-  if (now - lastNotify > 1500) {
+  if (now - lastNotify > 5000) {
     lastNotify = now;
     publishLocalState().catch(() => {});
   }
@@ -132,8 +147,12 @@ window.addEventListener('bt-ai-action', (ev) => {
 });
 
 tryAutoJoinFromUrl().then((sid) => {
-  if (!sid) ensureSession().catch(() => {});
-}).catch(() => ensureSession().catch(() => {}));
+  if (!sid) return ensureSession();
+  return sid;
+}).then(() => {
+  // Push local state after join so room has something; peers receive via SSE
+  return publishLocalState().catch(() => {});
+}).catch(() => ensureSession().then(() => publishLocalState()).catch(() => {}));
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});

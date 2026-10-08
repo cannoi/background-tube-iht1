@@ -1,10 +1,11 @@
 /**
  * Multi-device playback session client (SSE + command API).
- * Near-synchronized: same track/queue/play state across windows/devices.
+ * Default: all devices share one server room → same track.
+ * Opt-out: localStorage bt_sync_enabled=0 → private session.
  */
 import {
   getPlayerState, playVideo, togglePlayPause, next, previous,
-  setQueue, seekTo, toggleShuffle, cycleRepeat, addToQueue
+  setQueue, seekTo, toggleShuffle, cycleRepeat, addToQueue, pause as pausePlayer
 } from './player.js';
 
 const CLIENT_ID = (() => {
@@ -27,29 +28,20 @@ let es = null;
 let applyingRemote = false;
 let lastVersion = 0;
 let heartbeatTimer = null;
+let reconnectTimer = null;
 let onStateCb = null;
+let serverOnline = true;
+let lastTrackId = null;
+let reconnectAttempts = 0;
 
 export function getSessionInfo() {
-  return { sessionId, token, role, clientId: CLIENT_ID };
+  return { sessionId, token, role, clientId: CLIENT_ID, online: serverOnline };
 }
 
 export function onSessionState(fn) {
   onStateCb = fn;
 }
 
-async function api(path, method = 'GET', body) {
-  const opts = { method, headers: {} };
-  if (body) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
-  }
-  const res = await fetch(path, opts);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'session_error');
-  return data;
-}
-
-/** Sync ON by default — all devices share one room */
 export function isSyncEnabled() {
   try {
     const v = localStorage.getItem('bt_sync_enabled');
@@ -62,30 +54,72 @@ export function setSyncEnabled(on) {
   try { localStorage.setItem('bt_sync_enabled', on ? '1' : '0'); } catch (_) {}
 }
 
-export async function ensureSession() {
-  if (sessionId) return sessionId;
+async function api(path, method = 'GET', body) {
+  const opts = { method, headers: {} };
+  if (body) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'session_error');
+  serverOnline = true;
+  setOnlineUi(true);
+  return data;
+}
 
-  // Default: join shared room so every device plays the same track
+function setOnlineUi(online) {
+  serverOnline = online;
+  try {
+    let el = document.getElementById('btSyncStatus');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'btSyncStatus';
+      el.setAttribute('role', 'status');
+      document.body.appendChild(el);
+    }
+    if (online) {
+      el.className = 'bt-sync-status on';
+      el.textContent = isSyncEnabled()
+        ? ('Sync ON · ' + (sessionId ? sessionId.slice(0, 6) : '…'))
+        : 'Sync OFF';
+    } else {
+      el.className = 'bt-sync-status off';
+      el.textContent = 'Server offline · local playback only';
+    }
+  } catch (_) {}
+}
+
+/** Force join shared room (or private). Safe to call repeatedly. */
+export async function ensureSession() {
   if (isSyncEnabled()) {
     try {
       const out = await api('/api/session/room', 'POST', { clientId: CLIENT_ID });
-      sessionId = out.sessionId || (out.state && out.state.sessionId);
-      lastVersion = (out.state && out.state.version) || 1;
+      const sid = out.sessionId || (out.state && out.state.sessionId);
+      if (!sid) throw new Error('no_room');
+      sessionId = sid;
+      lastVersion = (out.state && out.state.version) || lastVersion || 1;
       try { localStorage.setItem('bt_session_id', sessionId); } catch (_) {}
       connectEvents();
       startHeartbeat();
-      // Pull authoritative state so late joiners match current track
+      // Apply server snapshot (another device may already be playing)
       try {
         const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
-        if (snap && snap.state) applyRemoteState(snap.state);
+        if (snap && snap.state) applyRemoteState(snap.state, true);
       } catch (_) {}
+      setOnlineUi(true);
+      reconnectAttempts = 0;
       return sessionId;
     } catch (e) {
       console.warn('[session] room join failed', e.message || e);
+      setOnlineUi(false);
+      scheduleReconnect();
+      return null;
     }
   }
 
-  // Sync OFF → private session (listen independently)
+  // Sync OFF — private session
+  if (sessionId) return sessionId;
   try {
     const saved = localStorage.getItem('bt_session_id_private');
     if (saved) {
@@ -100,13 +134,19 @@ export async function ensureSession() {
       }
     }
   } catch (_) {}
-  const out = await api('/api/session', 'POST', { leaderId: CLIENT_ID });
-  sessionId = out.state.sessionId;
-  lastVersion = out.state.version || 1;
-  try { localStorage.setItem('bt_session_id_private', sessionId); } catch (_) {}
-  connectEvents();
-  startHeartbeat();
-  return sessionId;
+  try {
+    const out = await api('/api/session', 'POST', { leaderId: CLIENT_ID });
+    sessionId = out.state.sessionId;
+    lastVersion = out.state.version || 1;
+    try { localStorage.setItem('bt_session_id_private', sessionId); } catch (_) {}
+    connectEvents();
+    startHeartbeat();
+    return sessionId;
+  } catch (e) {
+    setOnlineUi(false);
+    scheduleReconnect();
+    return null;
+  }
 }
 
 export async function joinSession(sid, tok, r) {
@@ -117,57 +157,110 @@ export async function joinSession(sid, tok, r) {
   try { localStorage.setItem('bt_session_id', sessionId); } catch (_) {}
   connectEvents();
   startHeartbeat();
+  try {
+    const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
+    if (snap && snap.state) applyRemoteState(snap.state, true);
+  } catch (_) {}
   return sessionId;
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return;
+  const delay = Math.min(15000, 1000 * Math.pow(1.5, Math.min(reconnectAttempts, 8)));
+  reconnectAttempts += 1;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    console.info('[session] reconnect attempt', reconnectAttempts);
+    // Clear stale id so we re-join current server room after SoloHost restart
+    sessionId = null;
+    ensureSession().catch(() => {});
+  }, delay);
 }
 
 function connectEvents() {
   if (!sessionId || typeof EventSource === 'undefined') return;
   if (es) {
     try { es.close(); } catch (_) {}
+    es = null;
   }
   let url = '/api/session/' + encodeURIComponent(sessionId) + '/events?clientId=' + encodeURIComponent(CLIENT_ID);
   if (token) url += '&token=' + encodeURIComponent(token);
   es = new EventSource(url);
+
   es.addEventListener('sync.state', (ev) => {
     try {
       const state = JSON.parse(ev.data);
-      applyRemoteState(state);
+      applyRemoteState(state, false);
+      serverOnline = true;
+      setOnlineUi(true);
+      reconnectAttempts = 0;
     } catch (_) {}
   });
+
+  es.onopen = () => {
+    serverOnline = true;
+    setOnlineUi(true);
+  };
+
   es.onerror = () => {
-    // browser will retry EventSource automatically in most cases
+    // EventSource failed — server may be down (Docker removed) or network blip
+    setOnlineUi(false);
+    try { if (es) es.close(); } catch (_) {}
+    es = null;
+    scheduleReconnect();
   };
 }
 
 function startHeartbeat() {
   clearInterval(heartbeatTimer);
   heartbeatTimer = setInterval(() => {
-    if (!sessionId) return;
+    if (!sessionId || applyingRemote) return;
     const p = getPlayerState();
-    pushCommand({
+    const payload = {
       type: 'heartbeat',
       position: p.currentTime || 0,
       playing: !!p.playing,
+      track: p.active || null,
+      queue: p.queue || [],
+      index: p.index || 0,
       baseVersion: lastVersion,
-    }).catch(() => {});
-  }, 12000);
+    };
+    pushCommand(payload).catch(() => {
+      setOnlineUi(false);
+      scheduleReconnect();
+    });
+  }, 8000);
 }
 
 export async function pushCommand(cmd) {
-  if (!sessionId) return null;
-  const body = { ...cmd, clientId: CLIENT_ID, token: token || undefined };
-  const out = await api('/api/session/' + encodeURIComponent(sessionId) + '/command', 'POST', body);
-  if (out.state) {
-    lastVersion = out.state.version || lastVersion;
-    if (onStateCb) onStateCb(out.state);
+  if (!sessionId) {
+    await ensureSession();
+    if (!sessionId) return null;
   }
-  return out;
+  try {
+    const body = { ...cmd, clientId: CLIENT_ID, token: token || undefined };
+    const out = await api('/api/session/' + encodeURIComponent(sessionId) + '/command', 'POST', body);
+    if (out.state) {
+      if (out.state.version != null) lastVersion = Math.max(lastVersion, out.state.version);
+      if (onStateCb) onStateCb(out.state);
+    }
+    return out;
+  } catch (e) {
+    setOnlineUi(false);
+    scheduleReconnect();
+    return null;
+  }
 }
 
 /** Push full local player snapshot as authoritative load */
 export async function publishLocalState() {
-  if (!sessionId || applyingRemote) return;
+  if (applyingRemote) return;
+  if (!sessionId) {
+    await ensureSession();
+    if (!sessionId) return;
+  }
   const p = getPlayerState();
+  lastTrackId = p.active && p.active.videoId;
   await pushCommand({
     type: 'load',
     track: p.active,
@@ -181,10 +274,18 @@ export async function publishLocalState() {
   });
 }
 
-function applyRemoteState(state) {
-  if (!state || state.sessionId !== sessionId) return;
-  if (state.version != null && state.version < lastVersion) return;
-  lastVersion = state.version || lastVersion;
+/**
+ * Apply remote state. force=true ignores version (initial join).
+ */
+function applyRemoteState(state, force) {
+  if (!state) return;
+  // When syncing room, accept state even if sessionId string differs after reconnect
+  if (state.sessionId && sessionId && state.sessionId !== sessionId && !force) {
+    // Switch to server's room id
+    sessionId = state.sessionId;
+  }
+  if (!force && state.version != null && state.version < lastVersion) return;
+  if (state.version != null) lastVersion = Math.max(lastVersion, state.version);
   if (onStateCb) onStateCb(state);
 
   applyingRemote = true;
@@ -206,40 +307,65 @@ function applyRemoteState(state) {
       playVideo(state.track, state.queue && state.queue.length ? state.queue : [state.track]);
     }
 
-    // Play/pause sync
-    if (state.playing && !p.playing) {
+    const p2 = getPlayerState();
+    if (state.playing && !p2.playing) {
       try { togglePlayPause(); } catch (_) {}
-    } else if (!state.playing && p.playing) {
-      try { togglePlayPause(); } catch (_) {}
+    } else if (!state.playing && p2.playing) {
+      try { pausePlayer(); } catch (_) {}
     }
 
-    // Seek if drift > 2.5s
-    if (state.position != null && Math.abs((p.currentTime || 0) - state.position) > 2.5) {
+    if (state.position != null && Math.abs((p2.currentTime || 0) - state.position) > 2.5) {
       try { seekTo(state.position); } catch (_) {}
     }
+  } catch (e) {
+    console.warn('[session] applyRemote', e);
   } finally {
-    setTimeout(() => { applyingRemote = false; }, 400);
+    setTimeout(() => { applyingRemote = false; }, 500);
   }
 }
 
-/** Call after local user play/pause/next so peers update */
 export function notifyLocalAction(type, extra = {}) {
-  if (!sessionId || applyingRemote) return;
-  pushCommand({ type, ...extra, baseVersion: lastVersion }).catch(() => {});
+  if (applyingRemote) return;
+  const map = {
+    play: 'play', pause: 'pause', toggle: 'toggle',
+    next: 'next', previous: 'previous',
+    seek: 'seek', shuffle: 'shuffle', repeat: 'repeat',
+  };
+  const t = map[type] || type;
+  pushCommand({ type: t, ...extra, baseVersion: lastVersion }).catch(() => {});
+  // Also push full snapshot so peers get track metadata
+  if (t === 'play' || t === 'next' || t === 'previous' || t === 'load') {
+    publishLocalState().catch(() => {});
+  }
 }
 
-// Auto-join from URL ?s=&t=&r=
 export function tryAutoJoinFromUrl() {
   try {
-    const params = new URLSearchParams(location.search);
-    const s = params.get('s');
-    const t = params.get('t');
-    const r = params.get('r') || 'remote';
-    if (s) {
-      return joinSession(s, t, r);
-    }
+    const u = new URL(location.href);
+    const s = u.searchParams.get('s');
+    const t = u.searchParams.get('t');
+    const r = u.searchParams.get('r');
+    if (s) return joinSession(s, t, r || 'remote');
   } catch (_) {}
   return Promise.resolve(null);
 }
 
-export { CLIENT_ID };
+/** Call when local track changes — immediate publish (not throttled) */
+export function onLocalTrackMaybeChanged() {
+  if (applyingRemote) return;
+  const p = getPlayerState();
+  const id = p.active && p.active.videoId;
+  if (id && id !== lastTrackId) {
+    lastTrackId = id;
+    publishLocalState().catch(() => {});
+  }
+}
+
+// Visibility: re-sync when tab becomes active
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      ensureSession().then(() => publishLocalState().catch(() => {})).catch(() => {});
+    }
+  });
+}
