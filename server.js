@@ -39,7 +39,7 @@ const ai = createAIService({ dataDir: DATA_DIR, appName: 'Background Tube', adap
 const fbOpts = {
   appId: 'background-tube',
   appName: 'Background Tube',
-  version: '1.2.3',
+  version: '1.2.4',
   hubId: 'SHFH-CANNOI-0905428801',
   baseUrl: 'http://14.176.78.46:8090',
   ingestToken: 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
@@ -59,6 +59,53 @@ function rateLimit(key, max, windowMs) {
   return e.count <= max;
 }
 
+
+
+/** Cached public base URL for QR pairing */
+let cachedPublicIp = null;
+let cachedPublicIpAt = 0;
+
+async function detectPublicIp() {
+  if (cachedPublicIp && Date.now() - cachedPublicIpAt < 30 * 60 * 1000) return cachedPublicIp;
+  const endpoints = [
+    'https://api.ipify.org?format=json',
+    'https://ifconfig.me/ip',
+  ];
+  for (const ep of endpoints) {
+    try {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 4000);
+      const r = await fetch(ep, { signal: controller.signal });
+      clearTimeout(t);
+      if (!r.ok) continue;
+      const ct = r.headers.get('content-type') || '';
+      if (ct.includes('json')) {
+        const j = await r.json();
+        const ip = j.ip || j.query;
+        if (ip) { cachedPublicIp = String(ip).trim(); cachedPublicIpAt = Date.now(); return cachedPublicIp; }
+      } else {
+        const text = (await r.text()).trim();
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(text)) {
+          cachedPublicIp = text; cachedPublicIpAt = Date.now(); return cachedPublicIp;
+        }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+function requestBaseUrl(req) {
+  const envBase = (process.env.PUBLIC_BASE_URL || process.env.SHFH_PUBLIC_URL || '').replace(/\/$/, '');
+  if (envBase) return envBase;
+  const xfProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const xfHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const host = xfHost || String(req.headers.host || '').trim();
+  const proto = xfProto || (req.socket && req.socket.encrypted ? 'https' : 'http');
+  if (host && !/^localhost\b|^127\.0\.0\.1\b|^0\.0\.0\.0\b/i.test(host)) {
+    return proto + '://' + host;
+  }
+  return null;
+}
 
 function getApiKey() {
   const key = process.env.YOUTUBE_API_KEY;
@@ -495,7 +542,7 @@ async function handleRequest(req, res) {
   }
 
   if (url.pathname === '/health' && req.method === 'GET') {
-    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.2.3', timestamp: new Date().toISOString() });
+    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.2.4', timestamp: new Date().toISOString() });
   }
 
   if (url.pathname === '/api/config-status' && req.method === 'GET') {
@@ -645,6 +692,28 @@ async function handleRequest(req, res) {
   }
 
   // Remote
+  if (url.pathname === '/api/public-url' && req.method === 'GET') {
+    try {
+      let base = requestBaseUrl(req);
+      let source = base ? 'request_host' : null;
+      if (!base) {
+        const ip = await detectPublicIp();
+        const port = process.env.PUBLIC_PORT || process.env.PORT || 8080;
+        if (ip) {
+          base = 'http://' + ip + ':' + port;
+          source = 'public_ip';
+        }
+      }
+      if (!base) {
+        base = 'http://127.0.0.1:' + (process.env.PORT || 8080);
+        source = 'fallback_local';
+      }
+      return sendJson(res, 200, { ok: true, baseUrl: base.replace(/\/$/, ''), source, port: Number(process.env.PORT || 8080) });
+    } catch (e) {
+      return sendJson(res, 500, { ok: false, error: e.message });
+    }
+  }
+
   if (url.pathname === '/api/remote/pair' && req.method === 'POST') {
     if (!rateLimit('pair:' + ip, 20, 60000)) return sendJson(res, 429, { ok: false, error: 'rate_limited' });
     const body = await readBody(req).catch(() => ({}));
@@ -712,7 +781,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.2.3 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.2.4 running on 0.0.0.0:' + PORT);
   });
 }
 

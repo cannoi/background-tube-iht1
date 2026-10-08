@@ -1,51 +1,22 @@
 /**
- * Fast voice search (SpeechRecognition) — not AI voice control.
+ * Keyboard mic helper — focuses search field so the user can use
+ * the OS/keyboard voice input (no overlapping floating SpeechRecognition UI).
  */
 export function initVoiceSearch() {
-  // Hook is applied when search UI is rendered; also listen globally
   document.addEventListener('click', (e) => {
-    const btn = e.target.closest('#voiceSearchBtn, .mic-btn');
-    if (!btn) return;
-    e.preventDefault();
-    startVoice(btn);
-  });
-}
-
-function startVoice(btn) {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    alert('Voice search is not supported in this browser.');
-    return;
-  }
-  const rec = new SR();
-  rec.lang = navigator.language || 'en-US';
-  rec.interimResults = false;
-  rec.maxAlternatives = 1;
-  btn.classList.add('recording');
-  btn.setAttribute('aria-label', 'Listening…');
-  rec.onresult = (ev) => {
-    const text = ev.results?.[0]?.[0]?.transcript || '';
-    const input = document.getElementById('searchInput') || document.querySelector('input[type="search"], input[name="q"]');
-    if (input && text) {
-      input.value = text;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      // Trigger search form submit if present
-      const form = input.closest('form');
-      if (form) form.requestSubmit?.();
-      else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      // Fallback: click search button
-      document.querySelector('[data-action="search"], #searchBtn')?.click();
+    const hint = e.target.closest('.search-hint, [data-action="focus-search"]');
+    if (hint) {
+      const input = document.getElementById('searchInput');
+      if (input) {
+        input.focus();
+        try { input.click(); } catch (_) {}
+      }
     }
-  };
-  rec.onerror = () => {
-    btn.classList.remove('recording');
-    btn.setAttribute('aria-label', 'Voice search');
-  };
-  rec.onend = () => {
-    btn.classList.remove('recording');
-    btn.setAttribute('aria-label', 'Voice search');
-  };
-  try { rec.start(); } catch (_) {
-    btn.classList.remove('recording');
-  }
+  });
+  // After search tab renders, ensure input is easy to reach for keyboard mic
+  document.addEventListener('focusin', (e) => {
+    if (e.target && e.target.id === 'searchInput') {
+      e.target.setAttribute('inputmode', 'search');
+    }
+  });
 }

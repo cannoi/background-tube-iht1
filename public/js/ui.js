@@ -30,6 +30,7 @@ const view = {
   nextPageToken: null,
   searchError: null,
   searching: false,
+  searchMode: 'ai', // 'ai' | 'yt' — default AI search
   popular: [],
   popularError: null,
   config: null,
@@ -138,32 +139,74 @@ export function renderHome() {
 }
 
 export function renderSearch() {
+  const mode = view.searchMode === 'yt' ? 'yt' : 'ai';
   return `
-    <form class="search-box search-row" data-action="search-form">
-      <div class="search-wrap">
-        <i class="fa-solid fa-magnifying-glass"></i>
-        <input id="searchInput" value="${escapeHtml(view.searchQuery)}" placeholder="Song, artist, keyword" enterkeyhint="search" />
-        <button type="button" class="mic-btn" id="voiceSearchBtn" title="Voice search" aria-label="Voice search"><i class="fa-solid fa-microphone"></i></button>
+    <section class="search-panel">
+      <div class="mode-switch" role="tablist" aria-label="Search mode">
+        <button type="button" class="mode-btn ${mode === 'ai' ? 'active' : ''}" data-action="search-mode-ai" role="tab" aria-selected="${mode === 'ai'}">
+          <i class="fa-solid fa-robot"></i> AI
+        </button>
+        <button type="button" class="mode-btn ${mode === 'yt' ? 'active' : ''}" data-action="search-mode-yt" role="tab" aria-selected="${mode === 'yt'}">
+          <i class="fa-brands fa-youtube"></i> YouTube
+        </button>
       </div>
-      <button class="primary" type="submit">Search</button>
-    </form>
-    <div class="chip-row" style="margin:12px 0">
-      ${DISCOVER.map((d) => `<button class="setting-btn" data-quick="${escapeHtml(d.q)}">${escapeHtml(d.label)}</button>`).join('')}
-    </div>
-    <div id="searchResults">
-      ${renderSearchResults()}
-    </div>
+      <form class="search-form" data-action="search-form">
+        <label class="search-field" for="searchInput">
+          <i class="fa-solid ${mode === 'ai' ? 'fa-wand-magic-sparkles' : 'fa-magnifying-glass'} search-ico"></i>
+          <input id="searchInput"
+            value="${escapeHtml(view.searchQuery)}"
+            placeholder="${mode === 'ai' ? 'Ask AI: chill V-pop, play Sơn Tùng…' : 'Song, artist, keyword'}"
+            enterkeyhint="search"
+            inputmode="search"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false" />
+        </label>
+        <div class="search-actions">
+          <button type="submit" class="primary search-go" aria-label="Search">
+            <i class="fa-solid fa-arrow-right"></i>
+            <span>${mode === 'ai' ? 'Ask' : 'Search'}</span>
+          </button>
+        </div>
+      </form>
+      <p class="search-hint muted">
+        <i class="fa-solid fa-microphone"></i>
+        Tap the field, then use your <strong>keyboard mic</strong> to speak.
+      </p>
+      <div class="chip-row">
+        ${DISCOVER.map((d) => `<button type="button" class="chip" data-quick="${escapeHtml(d.q)}">${escapeHtml(d.label)}</button>`).join('')}
+      </div>
+      <div id="searchResults" class="search-results">
+        ${renderSearchResults()}
+      </div>
+    </section>
   `;
 }
 
 function renderSearchResults() {
-  if (view.searching) return emptyState('fa-spinner fa-spin', 'Searching YouTube…', 'Using the official Data API v3.');
+  const mode = view.searchMode === 'yt' ? 'yt' : 'ai';
+  if (view.searching) {
+    return emptyState(
+      'fa-spinner fa-spin',
+      mode === 'ai' ? 'AI is finding music…' : 'Searching YouTube…',
+      mode === 'ai' ? 'Cache-first resolve · minimal API quota' : 'Official Data API v3'
+    );
+  }
   if (view.searchError) return errorState(view.searchError, 'Retry', 'retry-search');
-  if (!view.searchQuery) return emptyState('fa-music', 'Find a track', 'Search by song, artist, or mood.');
+  if (!view.searchQuery) {
+    return emptyState(
+      mode === 'ai' ? 'fa-robot' : 'fa-music',
+      mode === 'ai' ? 'AI Music Search' : 'Find a track',
+      mode === 'ai'
+        ? 'Describe a mood, artist, or playlist — AI recommends and can play.'
+        : 'Search by song, artist, or keyword on YouTube.'
+    );
+  }
   if (!view.searchItems.length) return emptyState('fa-ghost', 'No results', `Nothing matched “${escapeHtml(view.searchQuery)}”.`);
   return `
-    ${view.searchItems.map((item) => trackCard(item)).join('')}
-    ${view.nextPageToken ? `<button class="primary" style="width:100%;margin-top:8px" data-action="load-more">Load more</button>` : ''}
+    ${mode === 'ai' ? '<p class="queue-ai-label">AI results</p>' : ''}
+    ${view.searchItems.map((item) => trackCard(item, mode === 'ai' ? '' : '')).join('')}
+    ${mode === 'yt' && view.nextPageToken ? `<button class="primary block-btn" data-action="load-more">Load more</button>` : ''}
   `;
 }
 
@@ -467,19 +510,40 @@ async function runSearch(loadMore = false) {
   }
   const resultsBox = $('#searchResults');
   if (resultsBox) resultsBox.innerHTML = renderSearchResults();
+
   try {
-    const data = await searchVideos(view.searchQuery, loadMore ? view.nextPageToken : '');
-    view.searchItems = loadMore ? view.searchItems.concat(data.items || []) : (data.items || []);
-    view.nextPageToken = data.nextPageToken || null;
+    if (view.searchMode !== 'yt') {
+      // Default: AI music discovery
+      const res = await fetch('/api/music/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: view.searchQuery, context: { screen: 'search' } })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || data.message || 'AI search failed');
+      view.searchItems = data.items || [];
+      view.nextPageToken = null;
+      if (data.intent && data.intent.autoPlay !== false && view.searchItems[0]) {
+        const { playVideo } = await import('./player.js');
+        playVideo(view.searchItems[0], view.searchItems);
+        toast(data.reply || 'Playing…');
+      } else if (data.reply) {
+        toast(data.reply);
+      }
+    } else {
+      const data = await searchVideos(view.searchQuery, loadMore ? view.nextPageToken : '');
+      view.searchItems = loadMore ? view.searchItems.concat(data.items || []) : (data.items || []);
+      view.nextPageToken = data.nextPageToken || null;
+    }
   } catch (err) {
     view.searchError = err.message || 'Search failed.';
   } finally {
     view.searching = false;
     const box = $('#searchResults');
     if (box) box.innerHTML = renderSearchResults();
-    else render();
   }
 }
+
 
 async function loadPopular() {
   try {
@@ -590,6 +654,14 @@ function onClick(event) {
   }
 
   switch (t.dataset.action) {
+    case 'search-mode-ai':
+      view.searchMode = 'ai';
+      render();
+      break;
+    case 'search-mode-yt':
+      view.searchMode = 'yt';
+      render();
+      break;
     case 'search-form':
       event.preventDefault();
       runSearch();

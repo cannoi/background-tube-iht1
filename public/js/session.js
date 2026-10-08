@@ -51,9 +51,24 @@ async function api(path, method = 'GET', body) {
 
 export async function ensureSession() {
   if (sessionId) return sessionId;
+  try {
+    const saved = localStorage.getItem('bt_session_id');
+    if (saved) {
+      try {
+        await api('/api/session/' + encodeURIComponent(saved) + '/join', 'POST', { clientId: CLIENT_ID });
+        sessionId = saved;
+        connectEvents();
+        startHeartbeat();
+        return sessionId;
+      } catch (_) {
+        localStorage.removeItem('bt_session_id');
+      }
+    }
+  } catch (_) {}
   const out = await api('/api/session', 'POST', { leaderId: CLIENT_ID });
   sessionId = out.state.sessionId;
   lastVersion = out.state.version || 1;
+  try { localStorage.setItem('bt_session_id', sessionId); } catch (_) {}
   connectEvents();
   startHeartbeat();
   return sessionId;
@@ -64,6 +79,7 @@ export async function joinSession(sid, tok, r) {
   token = tok || null;
   role = r || 'remote';
   await api('/api/session/' + encodeURIComponent(sid) + '/join', 'POST', { clientId: CLIENT_ID, token });
+  try { localStorage.setItem('bt_session_id', sessionId); } catch (_) {}
   connectEvents();
   startHeartbeat();
   return sessionId;
