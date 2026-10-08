@@ -121,15 +121,25 @@ async function runMusicAI(message) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'music AI failed');
+    // Execute player actions first (play/pause/queue)
+    const acts = data.actions || [];
+    if (acts.length) executeActions(acts);
+    // Ensure items land in player even if actions incomplete
     if (data.items && data.items.length) {
+      const autoPlay = !(data.intent && data.intent.autoPlay === false) && !(data.intent && data.intent.queueOnly);
       window.dispatchEvent(new CustomEvent('bt-ai-action', {
-        detail: { name: 'queue_add', items: data.items, autoPlay: data.intent && data.intent.autoPlay !== false }
+        detail: {
+          name: 'queue_add',
+          items: data.items,
+          args: { items: data.items, autoPlay: autoPlay },
+          autoPlay: autoPlay
+        }
       }));
     }
-    executeActions(data.actions || []);
     return data.reply || data.error || 'OK';
   } catch (e) {
-    return null; // fall through to normal AI chat
+    console.warn('[BT Music AI]', e.message || e);
+    return null;
   }
 }
 
@@ -181,7 +191,8 @@ async function ensureRemoteCard() {
       '<button type="button" class="ai-remote-copy" id="aiRemoteCopy">Copy URL</button>' +
       '<button type="button" class="ai-remote-refresh" id="aiRemoteRefresh">Refresh</button>' +
       '</div>' +
-      '<p class="ai-remote-note">Uses public IP:port (SoloHost). Token expires ~15 min. No API keys in the link.</p>';
+      '<p class="ai-remote-note">Uses public IP:port (SoloHost). Token expires ~15 min. No API keys in the link.</p>' +
+      '<label class="ai-sync-row"><input type="checkbox" id="aiSyncToggle" ' + (localStorage.getItem('bt_sync_enabled') === '0' ? '' : 'checked') + '> <span>Sync all devices (same track)</span></label>';
     document.getElementById('aiRemoteCopy')?.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(url);
@@ -196,6 +207,18 @@ async function ensureRemoteCard() {
       remoteCardReady = false;
       ensureRemoteCard();
     });
+    const syncEl = document.getElementById('aiSyncToggle');
+    if (syncEl) {
+      syncEl.addEventListener('change', () => {
+        try { localStorage.setItem('bt_sync_enabled', syncEl.checked ? '1' : '0'); } catch (e) {}
+        // force re-join room or private on next reload path
+        try {
+          localStorage.removeItem('bt_session_id');
+          localStorage.removeItem('bt_session_id_private');
+        } catch (e) {}
+        location.reload();
+      });
+    }
     remoteCardReady = true;
   } catch (e) {
     card.innerHTML = '<div class="ai-remote-title">Remote</div><p class="ai-remote-help">Could not build pair link. Check network / PUBLIC_BASE_URL.</p>';
@@ -268,7 +291,9 @@ async function sendAI() {
   aiInput.value = '';
   appendMsg('user', escapeHtml(text));
   const loading = appendMsg('ai', '…');
-  const musicLike = /play|pause|stop|next|prev|karaoke|nhạc|nhac|music|recommend|gợi|goi|chill|workout|phát|phat|dừng|dung|tiếp|tiep|hát|hat|shuffle|repeat|queue|similar|volume|âm lượng|mute|sleep|hẹn giờ|timer|seek|tua|lofi|bài|song|artist|now playing|đang phát|tắt nhạc/i.test(text);
+  // Prefer music DJ path for almost all chat (except pure settings/help/feedback)
+  const nonMusic = /^(help|hướng dẫn|settings|cài đặt|feedback|góp ý|api key|provider|donate)/i.test(text);
+  const musicLike = !nonMusic;
   try {
     if (musicLike) {
       const musicReply = await runMusicAI(text);

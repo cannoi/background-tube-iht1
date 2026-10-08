@@ -441,38 +441,63 @@ async function handleMusicAI(body, res) {
   let intent = null;
   let aiReply = null;
   let actions = [];
+  let usedSearchApi = false;
+  const history = Array.isArray(body.history) ? body.history : [];
 
-  if (ai.configured()) {
+  // 1) Local intent FIRST — DJ-like controls without AI lag
+  intent = musicEngine.localIntentParse(message);
+
+  // 2) AI only when local is weak (generic search with vague text still OK)
+  const simpleControl = intent && intent.intent === 'player_control';
+  const simpleQueue = intent && intent.intent === 'queue_operation';
+  const needsAI = !simpleControl && !simpleQueue && ai.configured() && (
+    /giống|similar|gợi ý|recommend|theo mood|buổi tối|thư giãn|dễ hát|đang hot|top|playlist/i.test(message)
+  );
+
+  if (needsAI) {
     try {
-      const systemHint = 'For music requests include JSON intent when possible: {"intent":"player_control|music_search|recommendation|karaoke|help","action":"...","query":"...","mood":"...","language":"...","limit":8,"autoPlay":true,"candidates":[{"artist":"...","title":"..."}]}';
+      const systemHint = 'You are a music DJ. Reply briefly in the user language. ALWAYS include a JSON line: {"intent":"music_search|recommendation|karaoke|player_control","query":"...","mood":"...","language":"vi|en|ja","limit":8,"autoPlay":true,"candidates":[{"artist":"","title":""}]}';
       const out = await ai.chat({
         message: message + '\n\n' + systemHint,
-        history: Array.isArray(body.history) ? body.history.slice(-6) : [],
+        history: history.slice(-6),
         context: body.context || {},
       });
       aiReply = out.reply || '';
       actions = out.actions || [];
-      intent = musicEngine.parseIntent(aiReply) || null;
-      if (intent && !intent.candidates && /recommendation|music_search|karaoke/.test(intent.intent)) {
-        const lines = String(aiReply).split('\n').map((l) => l.replace(/^\d+[\).\s-]+/, '').trim()).filter(Boolean);
+      const parsed = musicEngine.parseIntent(aiReply) || null;
+      if (parsed && parsed.intent && parsed.intent !== 'help') {
+        // merge: keep local autoPlay default
+        intent = Object.assign({ autoPlay: true }, intent || {}, parsed);
+      }
+      if (intent && !intent.candidates && /recommendation|music_search|karaoke/.test(intent.intent || '')) {
+        const lines = String(aiReply).split('\n').map((l) => l.replace(/^\d+[).\s-]+/, '').trim()).filter(Boolean);
         const cands = [];
-        for (const line of lines.slice(0, 15)) {
-          if (line.length < 4 || line.length > 120) continue;
-          if (/^(here|duoi|sau|i recommend|goi y)/i.test(line)) continue;
+        for (const line of lines.slice(0, 12)) {
+          if (line.length < 4 || line.length > 100) continue;
+          if (/^(here|dưới|sau|i recommend|gợi ý|json|intent)/i.test(line)) continue;
+          if (line.startsWith('{')) continue;
           const parts = line.split(/\s[-–—|]\s/);
-          if (parts.length >= 2) cands.push({ artist: parts[0].trim(), title: parts.slice(1).join(' - ').trim(), query: line });
+          if (parts.length >= 2) cands.push({ artist: parts[0].trim(), title: parts.slice(1).join(' - ').trim() });
           else cands.push({ artist: '', title: line, query: line });
         }
         if (cands.length) intent.candidates = cands;
       }
-    } catch (e) { console.error('AI music chat fail:', e.message); }
+    } catch (e) {
+      console.warn('music AI provider', e.message || e);
+    }
   }
 
   if (!intent) intent = musicEngine.localIntentParse(message);
+  if (!intent) intent = { intent: 'music_search', query: message, limit: 8, autoPlay: true };
+
   const validIntents = new Set(['player_control', 'music_search', 'recommendation', 'queue_operation', 'karaoke', 'library', 'help']);
-  if (!intent || !validIntents.has(intent.intent)) {
-    sendJson(res, 200, { ok: true, intent: { intent: 'help' }, reply: aiReply || (await adapter.localReply(message, body.context || {})), items: [], actions });
-    return;
+  if (!validIntents.has(intent.intent)) {
+    intent = { intent: 'music_search', query: message, limit: 8, autoPlay: true };
+  }
+
+  // Default autoPlay for music requests (DJ behavior)
+  if (intent.intent === 'music_search' || intent.intent === 'recommendation' || intent.intent === 'karaoke') {
+    if (intent.autoPlay === undefined) intent.autoPlay = true;
   }
 
   if (intent.intent === 'player_control') {
@@ -490,71 +515,100 @@ async function handleMusicAI(body, res) {
         const t = (body.context && body.context.title) || null;
         reply = t ? ('Now playing: ' + t + (body.context.channel ? ' · ' + body.context.channel : '')) : 'Nothing is playing.';
       } else if (act === 'queue_status') {
-        const n = (body.context && body.context.queueLength) || 0;
-        reply = 'Queue has ' + n + ' track(s).';
+        reply = 'Queue has ' + ((body.context && body.context.queueLength) || 0) + ' track(s).';
       } else if (act === 'sleep') {
         reply = (intent.value === 0) ? 'Sleep timer cleared.' : ('Sleep timer: ' + intent.value + ' min.');
       } else {
-        reply = 'OK: ' + act;
+        reply = 'OK · ' + act;
       }
     }
     sendJson(res, 200, {
-      ok: true,
-      intent,
-      reply,
+      ok: true, intent, reply,
       actions: [{ name: act, args, client_execute: true }],
       items: [],
     });
     return;
   }
+
   if (intent.intent === 'queue_operation') {
     const act = intent.action || 'queue_clear';
     sendJson(res, 200, {
-      ok: true,
-      intent,
-      reply: aiReply || ('OK: ' + act),
+      ok: true, intent, reply: aiReply || ('OK · ' + act),
       actions: [{ name: act, args: {}, client_execute: true }],
       items: [],
     });
     return;
   }
+
   if (intent.intent === 'help') {
-    sendJson(res, 200, { ok: true, intent, reply: aiReply || (await adapter.localReply(message, body.context || {})), items: [], actions });
+    sendJson(res, 200, {
+      ok: true, intent,
+      reply: aiReply || (await adapter.localReply(message, body.context || {})),
+      items: [], actions: [],
+    });
     return;
   }
 
+  // Resolve playable tracks
   let candidates = intent.candidates && intent.candidates.length ? intent.candidates : musicEngine.seedCandidates(intent);
-  if (intent.intent === 'music_search' && intent.query) candidates = [{ artist: '', title: intent.query, query: intent.query }, ...candidates];
+  if (intent.intent === 'music_search' && intent.query) {
+    candidates = [{ artist: '', title: intent.query, query: intent.query }, ...candidates];
+  }
   if (intent.intent === 'karaoke') {
     const q = intent.query || message;
-    candidates = [{ artist: '', title: q, query: q + ' karaoke' }, { artist: '', title: q, query: q + ' karaoke beat' }, ...candidates];
+    candidates = [
+      { artist: '', title: q + ' karaoke', query: q + ' karaoke' },
+      { artist: '', title: q, query: q },
+      ...candidates,
+    ];
   }
 
-  const history = Array.isArray(body.historyTracks) ? body.historyTracks : [];
   let items = [];
-  let usedSearchApi = false;
   try {
-    items = await musicEngine.resolveCandidates(candidates.slice(0, intent.limit || 8), async (q, n) => { usedSearchApi = true; return ytSearchMinimal(q, n); }, { limit: intent.limit || 8, history });
-  } catch (e) { console.error('resolve candidates:', e.message); }
+    items = await musicEngine.resolveCandidates(
+      candidates.slice(0, intent.limit || 8),
+      async (q, n) => { usedSearchApi = true; return ytSearchMinimal(q, n); },
+      { limit: intent.limit || 8, history }
+    );
+  } catch (e) {
+    console.warn('resolveCandidates', e.message || e);
+  }
 
   if (!items.length && (intent.query || message) && getApiKey()) {
     try {
       usedSearchApi = true;
-      const data = await ytSearchMinimal(intent.intent === 'karaoke' ? ((intent.query || message) + ' karaoke') : (intent.query || message), intent.limit || 8);
+      const q = intent.intent === 'karaoke'
+        ? ((intent.query || message) + ' karaoke')
+        : (intent.query || message);
+      const data = await ytSearchMinimal(q, intent.limit || 8);
       items = data.items || [];
-    } catch (e) { console.error('fallback search:', e.message); }
+    } catch (e) {
+      console.warn('yt fallback', e.message || e);
+    }
   }
 
-  items = musicEngine.rankWithTrends(items, { mood: intent.mood, region: intent.region || REGION });
+  items = musicEngine.rankWithTrends(items, { mood: intent.mood, region: intent.region || process.env.REGION || 'VN' });
+
+  const autoPlay = intent.autoPlay !== false && !intent.queueOnly;
+  const reply = aiReply
+    || (items.length
+      ? (autoPlay
+          ? ('▶ ' + (items[0].title || 'Track') + (items.length > 1 ? ' · +' + (items.length - 1) + ' in queue' : ''))
+          : ('Found ' + items.length + ' track(s).'))
+      : 'No playable tracks. Add a YouTube API key in server env or try Search tab.');
 
   sendJson(res, 200, {
-    ok: true, intent,
-    reply: aiReply || (items.length ? ('Found ' + items.length + ' track(s).' + (intent.autoPlay ? ' Playing…' : '')) : 'No playable tracks resolved. Try Search.'),
+    ok: true,
+    intent,
+    reply,
+    usedSearchApi,
     items,
-    actions: actions.length ? actions : (items[0] ? [{ name: intent.queueOnly ? 'queue_add' : (intent.autoPlay !== false ? 'queue_add' : 'queue_add'), args: { items, playNext: !!intent.playNext, autoPlay: intent.autoPlay !== false && !intent.queueOnly }, client_execute: true }] : []),
-    quota: { usedSearchApi, cachedFirst: !usedSearchApi },
+    actions: items[0]
+      ? [{ name: 'queue_add', args: { items, autoPlay, playNext: !!intent.playNext }, client_execute: true }]
+      : actions,
   });
 }
+
 
 async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://' + (req.headers.host || 'localhost'));
@@ -690,6 +744,19 @@ async function handleRequest(req, res) {
   }
 
   // Session
+  
+  // Shared default room — all clients join here when sync is ON
+  if (url.pathname === '/api/session/room' && req.method === 'GET') {
+    const room = sessionManager.getDefaultRoom();
+    return sendJson(res, 200, { ok: true, state: sessionManager.publicState(room), sessionId: room.sessionId });
+  }
+  if (url.pathname === '/api/session/room' && req.method === 'POST') {
+    const body = await readBody(req).catch(() => ({}));
+    const room = sessionManager.getDefaultRoom();
+    const state = sessionManager.joinSession(room.sessionId, body.clientId || sessionManager.id());
+    return sendJson(res, 200, { ok: true, state: state || sessionManager.publicState(room), sessionId: room.sessionId });
+  }
+
   if (url.pathname === '/api/session' && req.method === 'POST') {
     const body = await readBody(req).catch(() => ({}));
     const s = sessionManager.createSession(body.leaderId);
@@ -832,7 +899,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.2.8 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.2.9 running on 0.0.0.0:' + PORT);
   });
 }
 

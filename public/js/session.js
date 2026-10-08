@@ -49,10 +49,45 @@ async function api(path, method = 'GET', body) {
   return data;
 }
 
+/** Sync ON by default — all devices share one room */
+export function isSyncEnabled() {
+  try {
+    const v = localStorage.getItem('bt_sync_enabled');
+    if (v === null || v === undefined) return true;
+    return v !== '0' && v !== 'false';
+  } catch (_) { return true; }
+}
+
+export function setSyncEnabled(on) {
+  try { localStorage.setItem('bt_sync_enabled', on ? '1' : '0'); } catch (_) {}
+}
+
 export async function ensureSession() {
   if (sessionId) return sessionId;
+
+  // Default: join shared room so every device plays the same track
+  if (isSyncEnabled()) {
+    try {
+      const out = await api('/api/session/room', 'POST', { clientId: CLIENT_ID });
+      sessionId = out.sessionId || (out.state && out.state.sessionId);
+      lastVersion = (out.state && out.state.version) || 1;
+      try { localStorage.setItem('bt_session_id', sessionId); } catch (_) {}
+      connectEvents();
+      startHeartbeat();
+      // Pull authoritative state so late joiners match current track
+      try {
+        const snap = await api('/api/session/' + encodeURIComponent(sessionId), 'GET');
+        if (snap && snap.state) applyRemoteState(snap.state);
+      } catch (_) {}
+      return sessionId;
+    } catch (e) {
+      console.warn('[session] room join failed', e.message || e);
+    }
+  }
+
+  // Sync OFF → private session (listen independently)
   try {
-    const saved = localStorage.getItem('bt_session_id');
+    const saved = localStorage.getItem('bt_session_id_private');
     if (saved) {
       try {
         await api('/api/session/' + encodeURIComponent(saved) + '/join', 'POST', { clientId: CLIENT_ID });
@@ -61,14 +96,14 @@ export async function ensureSession() {
         startHeartbeat();
         return sessionId;
       } catch (_) {
-        localStorage.removeItem('bt_session_id');
+        localStorage.removeItem('bt_session_id_private');
       }
     }
   } catch (_) {}
   const out = await api('/api/session', 'POST', { leaderId: CLIENT_ID });
   sessionId = out.state.sessionId;
   lastVersion = out.state.version || 1;
-  try { localStorage.setItem('bt_session_id', sessionId); } catch (_) {}
+  try { localStorage.setItem('bt_session_id_private', sessionId); } catch (_) {}
   connectEvents();
   startHeartbeat();
   return sessionId;

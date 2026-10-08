@@ -109,7 +109,8 @@ window.addEventListener('bt-ai-action', (ev) => {
       case 'play_next': {
         const items = d.items || args.items || [];
         if (!items.length) break;
-        const autoPlay = args.autoPlay !== false;
+        // autoPlay default true (DJ) unless explicitly false
+        const autoPlay = !(args.autoPlay === false || d.autoPlay === false);
         if (name === 'play_next' || args.playNext) {
           addToQueue(items, { playNext: true });
           if (autoPlay) playVideo(items[0], getPlayerState().queue.concat(items));
@@ -118,7 +119,7 @@ window.addEventListener('bt-ai-action', (ev) => {
         } else {
           addToQueue(items);
         }
-        try { toast('AI: ' + items.length + ' track(s)'); } catch (_) {}
+        try { toast('▶ ' + (items[0].title || items.length + ' tracks')); } catch (_) {}
         publishLocalState().catch(() => {});
         break;
       }
