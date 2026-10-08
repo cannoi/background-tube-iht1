@@ -1,7 +1,9 @@
 import { initTheme } from './theme.js';
 import {
   initPlayer, onPlayerChange, getPlayerState, playVideo, togglePlayPause,
-  next, previous, cycleRepeat, toggleShuffle, addToQueue, seekTo
+  next, previous, cycleRepeat, toggleShuffle, addToQueue, seekTo,
+  stopPlayback, pause, play, clearQueue, setSleepTimer, clearSleepTimer,
+  setVolume, mute
 } from './player.js';
 import { initUi, render, renderMini, openPlayer, view, toast } from './ui.js';
 import { initVoiceSearch } from './voice.js';
@@ -15,7 +17,10 @@ initVoiceSearch();
 initRemoteUI();
 
 function syncPlayerGlobal() {
-  try { window.__btPlayerState = getPlayerState(); } catch (_) {}
+  try {
+    const p = getPlayerState();
+    window.__btPlayerState = p;
+  } catch (_) {}
 }
 syncPlayerGlobal();
 
@@ -38,7 +43,6 @@ onPlayerChange(() => {
       if (p.error) err.textContent = p.error.message;
     }
   }
-  // Throttle session publish for multi-window
   const now = Date.now();
   if (now - lastNotify > 1500) {
     lastNotify = now;
@@ -46,36 +50,86 @@ onPlayerChange(() => {
   }
 });
 
+/** Full AI music control surface */
 window.addEventListener('bt-ai-action', (ev) => {
   const d = ev.detail || {};
   const name = d.name;
+  const args = d.args || {};
   try {
-    if (name === 'next') { next(); notifyLocalAction('next'); }
-    else if (name === 'previous') { previous(); notifyLocalAction('previous'); }
-    else if (name === 'toggle') { togglePlayPause(); notifyLocalAction('toggle'); }
-    else if (name === 'pause') {
-      if (getPlayerState().playing) togglePlayPause();
-      notifyLocalAction('pause');
-    }
-    else if (name === 'play') {
-      if (!getPlayerState().playing) togglePlayPause();
-      notifyLocalAction('play');
-    }
-    else if (name === 'shuffle') { toggleShuffle(); notifyLocalAction('shuffle'); }
-    else if (name === 'repeat') { cycleRepeat(); notifyLocalAction('repeat'); }
-    else if (name === 'seek' && d.args) { seekTo(d.args.seconds || d.args.position); notifyLocalAction('seek', { position: d.args.seconds }); }
-    else if ((name === 'queue_add' || name === 'play_next') && d.items && d.items[0]) {
-      if (name === 'play_next') addToQueue(d.items, { playNext: true });
-      playVideo(d.items[0], d.items);
-      try { toast('AI: ' + d.items.length + ' track(s)'); } catch (_) {}
-      publishLocalState().catch(() => {});
+    switch (name) {
+      case 'next':
+        next(); notifyLocalAction('next'); break;
+      case 'previous':
+        previous(); notifyLocalAction('previous'); break;
+      case 'toggle':
+        togglePlayPause(); notifyLocalAction('toggle'); break;
+      case 'pause':
+        pause(); notifyLocalAction('pause'); break;
+      case 'play':
+        play(); notifyLocalAction('play'); break;
+      case 'stop':
+        stopPlayback(); notifyLocalAction('pause'); break;
+      case 'shuffle':
+        toggleShuffle(); notifyLocalAction('shuffle'); break;
+      case 'repeat':
+        cycleRepeat(); notifyLocalAction('repeat'); break;
+      case 'seek':
+        seekTo(args.seconds != null ? args.seconds : args.position);
+        notifyLocalAction('seek', { position: args.seconds || args.position });
+        break;
+      case 'volume':
+        setVolume(args.level != null ? args.level : args.value);
+        try { toast('Volume ' + (args.level != null ? args.level : args.value)); } catch (_) {}
+        break;
+      case 'mute':
+        mute(true); break;
+      case 'unmute':
+        mute(false); break;
+      case 'sleep': {
+        const mins = args.minutes != null ? args.minutes : args.value;
+        if (!mins) {
+          clearSleepTimer();
+          try { toast('Sleep timer off'); } catch (_) {}
+        } else {
+          setSleepTimer(mins);
+          try { toast('Sleep ' + mins + ' min'); } catch (_) {}
+        }
+        break;
+      }
+      case 'queue_clear':
+        clearQueue();
+        publishLocalState().catch(() => {});
+        try { toast('Queue cleared'); } catch (_) {}
+        break;
+      case 'now_playing':
+      case 'queue_status':
+        // reply already in chat; optional toast
+        break;
+      case 'queue_add':
+      case 'play_next': {
+        const items = d.items || args.items || [];
+        if (!items.length) break;
+        const autoPlay = args.autoPlay !== false;
+        if (name === 'play_next' || args.playNext) {
+          addToQueue(items, { playNext: true });
+          if (autoPlay) playVideo(items[0], getPlayerState().queue.concat(items));
+        } else if (autoPlay) {
+          playVideo(items[0], items);
+        } else {
+          addToQueue(items);
+        }
+        try { toast('AI: ' + items.length + ' track(s)'); } catch (_) {}
+        publishLocalState().catch(() => {});
+        break;
+      }
+      default:
+        break;
     }
   } catch (e) {
     console.warn('bt-ai-action', e);
   }
 });
 
-// Optional: create session early so QR is fast
 tryAutoJoinFromUrl().then((sid) => {
   if (!sid) ensureSession().catch(() => {});
 }).catch(() => ensureSession().catch(() => {}));

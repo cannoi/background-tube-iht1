@@ -39,7 +39,7 @@ const ai = createAIService({ dataDir: DATA_DIR, appName: 'Background Tube', adap
 const fbOpts = {
   appId: 'background-tube',
   appName: 'Background Tube',
-  version: '1.2.2',
+  version: '1.2.3',
   hubId: 'SHFH-CANNOI-0905428801',
   baseUrl: 'http://14.176.78.46:8090',
   ingestToken: 'cannoi_7Kp9xV2mQ8rN4tY6cL3wA5zD1eF0uH9',
@@ -400,7 +400,46 @@ async function handleMusicAI(body, res) {
   }
 
   if (intent.intent === 'player_control') {
-    sendJson(res, 200, { ok: true, intent, reply: aiReply || ('OK: ' + (intent.action || 'control')), actions: [{ name: intent.action || 'play', args: {}, client_execute: true }], items: [] });
+    const act = intent.action || 'play';
+    const args = {};
+    if (intent.value != null) {
+      if (act === 'seek') args.seconds = intent.value;
+      else if (act === 'volume') args.level = intent.value;
+      else if (act === 'sleep') args.minutes = intent.value;
+      else args.value = intent.value;
+    }
+    let reply = aiReply;
+    if (!reply) {
+      if (act === 'now_playing') {
+        const t = (body.context && body.context.title) || null;
+        reply = t ? ('Now playing: ' + t + (body.context.channel ? ' · ' + body.context.channel : '')) : 'Nothing is playing.';
+      } else if (act === 'queue_status') {
+        const n = (body.context && body.context.queueLength) || 0;
+        reply = 'Queue has ' + n + ' track(s).';
+      } else if (act === 'sleep') {
+        reply = (intent.value === 0) ? 'Sleep timer cleared.' : ('Sleep timer: ' + intent.value + ' min.');
+      } else {
+        reply = 'OK: ' + act;
+      }
+    }
+    sendJson(res, 200, {
+      ok: true,
+      intent,
+      reply,
+      actions: [{ name: act, args, client_execute: true }],
+      items: [],
+    });
+    return;
+  }
+  if (intent.intent === 'queue_operation') {
+    const act = intent.action || 'queue_clear';
+    sendJson(res, 200, {
+      ok: true,
+      intent,
+      reply: aiReply || ('OK: ' + act),
+      actions: [{ name: act, args: {}, client_execute: true }],
+      items: [],
+    });
     return;
   }
   if (intent.intent === 'help') {
@@ -436,7 +475,7 @@ async function handleMusicAI(body, res) {
     ok: true, intent,
     reply: aiReply || (items.length ? ('Found ' + items.length + ' track(s).' + (intent.autoPlay ? ' Playing…' : '')) : 'No playable tracks resolved. Try Search.'),
     items,
-    actions: actions.length ? actions : (intent.autoPlay && items[0] ? [{ name: 'queue_add', args: { items }, client_execute: true }] : []),
+    actions: actions.length ? actions : (items[0] ? [{ name: intent.queueOnly ? 'queue_add' : (intent.autoPlay !== false ? 'queue_add' : 'queue_add'), args: { items, playNext: !!intent.playNext, autoPlay: intent.autoPlay !== false && !intent.queueOnly }, client_execute: true }] : []),
     quota: { usedSearchApi, cachedFirst: !usedSearchApi },
   });
 }
@@ -456,7 +495,7 @@ async function handleRequest(req, res) {
   }
 
   if (url.pathname === '/health' && req.method === 'GET') {
-    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.2.2', timestamp: new Date().toISOString() });
+    return sendJson(res, 200, { status: 'healthy', app: 'Background Tube', version: '1.2.3', timestamp: new Date().toISOString() });
   }
 
   if (url.pathname === '/api/config-status' && req.method === 'GET') {
@@ -673,7 +712,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.2.2 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.2.3 running on 0.0.0.0:' + PORT);
   });
 }
 

@@ -177,6 +177,18 @@ async function run() {
   assert.ok(pref.weights.personalPreference >= pref.weights.localTrend);
   assert.ok(pref.weights.localTrend >= pref.weights.globalTrend);
 
+    
+  assert.strictEqual(music.localIntentParse('stop').action, 'stop');
+  assert.strictEqual(music.localIntentParse('sleep 30').action, 'sleep');
+  assert.strictEqual(music.localIntentParse('sleep 30').value, 30);
+  assert.strictEqual(music.localIntentParse('volume 40').action, 'volume');
+  assert.strictEqual(music.localIntentParse('clear queue').action, 'queue_clear');
+  const sleepCmd = await request(server, '/api/music/ai', 'POST', { message: 'sleep 15' });
+  assert.strictEqual(sleepCmd.status, 200);
+  assert.strictEqual(sleepCmd.json.intent.action, 'sleep');
+  const stopCmd = await request(server, '/api/music/ai', 'POST', { message: 'stop' });
+  assert.strictEqual(stopCmd.json.intent.action, 'stop');
+
     console.log('All tests passed');
   } finally {
     server.close();

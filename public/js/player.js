@@ -30,7 +30,8 @@ function emit() {
 }
 
 export function getPlayerState() {
-  return { ...state, queue: [...state.queue] };
+  const sleep = (typeof getSleepTimer === 'function') ? getSleepTimer() : { active: false };
+  return { ...state, queue: [...state.queue], sleep };
 }
 
 export function onPlayerChange(fn) {
@@ -388,6 +389,67 @@ export function seekTo(seconds) {
   state.currentTime = t;
   setState({ currentTime: t });
   updateSeekUi();
+}
+
+
+let sleepTimerId = null;
+let sleepEndsAt = null;
+
+export function setSleepTimer(minutes) {
+  clearSleepTimer();
+  const m = Math.max(0, Number(minutes) || 0);
+  if (m <= 0) {
+    setState({ lastAction: 'sleep_off' });
+    return { ok: true, minutes: 0 };
+  }
+  sleepEndsAt = Date.now() + m * 60 * 1000;
+  sleepTimerId = setTimeout(() => {
+    sleepTimerId = null;
+    sleepEndsAt = null;
+    try { pause(); } catch (_) {}
+    setState({ lastAction: 'sleep_fired', playing: false });
+  }, m * 60 * 1000);
+  setState({ lastAction: 'sleep_on' });
+  return { ok: true, minutes: m, endsAt: sleepEndsAt };
+}
+
+export function clearSleepTimer() {
+  if (sleepTimerId) clearTimeout(sleepTimerId);
+  sleepTimerId = null;
+  sleepEndsAt = null;
+  return { ok: true };
+}
+
+export function getSleepTimer() {
+  if (!sleepEndsAt) return { active: false, remainingMs: 0 };
+  const remainingMs = Math.max(0, sleepEndsAt - Date.now());
+  return { active: remainingMs > 0, remainingMs, endsAt: sleepEndsAt };
+}
+
+export function setVolume(level) {
+  // 0–100; YouTube IFrame supports setVolume when available
+  const v = Math.max(0, Math.min(100, Number(level)));
+  if (Number.isNaN(v)) return { ok: false };
+  if (ytPlayer && typeof ytPlayer.setVolume === 'function') {
+    try { ytPlayer.setVolume(v); } catch (_) {}
+  }
+  if (ytPlayer && typeof ytPlayer.isMuted === 'function' && v > 0) {
+    try { if (ytPlayer.isMuted()) ytPlayer.unMute(); } catch (_) {}
+  }
+  setState({ lastAction: 'volume' });
+  return { ok: true, volume: v };
+}
+
+export function mute(on) {
+  if (!ytPlayer) return { ok: false };
+  try {
+    if (on === false || on === 'off' || on === 0) {
+      if (typeof ytPlayer.unMute === 'function') ytPlayer.unMute();
+    } else if (typeof ytPlayer.mute === 'function') {
+      ytPlayer.mute();
+    }
+  } catch (_) {}
+  return { ok: true };
 }
 
 export function initPlayer() {

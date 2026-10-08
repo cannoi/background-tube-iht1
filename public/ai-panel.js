@@ -195,7 +195,7 @@ async function sendAI() {
   aiInput.value = '';
   appendMsg('user', escapeHtml(text));
   const loading = appendMsg('ai', '…');
-  const musicLike = /play|pause|next|prev|karaoke|nhạc|nhac|music|recommend|gợi|goi|chill|workout|phát|phat|dừng|dung|tiếp|tiep|hát|hat|shuffle|repeat|queue|similar/i.test(text);
+  const musicLike = /play|pause|stop|next|prev|karaoke|nhạc|nhac|music|recommend|gợi|goi|chill|workout|phát|phat|dừng|dung|tiếp|tiep|hát|hat|shuffle|repeat|queue|similar|volume|âm lượng|mute|sleep|hẹn giờ|timer|seek|tua|lofi|bài|song|artist|now playing|đang phát|tắt nhạc/i.test(text);
   try {
     if (musicLike) {
       const musicReply = await runMusicAI(text);
