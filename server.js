@@ -194,10 +194,16 @@ function sendFile(res, filePath) {
       return;
     }
     const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600'
-    });
+      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=3600',
+    };
+    // Allow mic for AI voice on this origin (Chrome Permissions-Policy)
+    if (ext === '.html' || ext === '.js') {
+      headers['Permissions-Policy'] = 'microphone=(self), camera=()';
+      headers['Feature-Policy'] = "microphone 'self'";
+    }
+    res.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(res);
   });
 }
@@ -826,7 +832,7 @@ function createServer() {
 
 if (require.main === module) {
   createServer().listen(PORT, '0.0.0.0', () => {
-    console.log('Background Tube v1.2.5 running on 0.0.0.0:' + PORT);
+    console.log('Background Tube v1.2.7 running on 0.0.0.0:' + PORT);
   });
 }
 
