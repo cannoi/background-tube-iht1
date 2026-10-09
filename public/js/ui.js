@@ -394,7 +394,7 @@ function ensurePlayerOverlay() {
   return overlay;
 }
 
-function updatePlayerChrome() {
+export function updatePlayerChrome() {
   const p = getPlayerState();
   const video = p.active;
   const title = document.getElementById('playerTitle');
@@ -422,13 +422,16 @@ function updatePlayerChrome() {
   const list = document.getElementById('queueList');
   if (list) {
     list.innerHTML = p.queue.map((item, idx) => `
-      <div class="track" style="${idx === p.index ? 'box-shadow:0 0 0 1px var(--brand)' : ''}">
-        <button class="ghost" data-play="${escapeHtml(item.videoId)}" type="button" style="flex:1;text-align:left">
-          <div class="thumb"><img loading="lazy" src="${escapeHtml(item.thumbnail || '')}" alt=""></div>
-          <div><strong>${escapeHtml(item.title)}</strong><div class="muted">${escapeHtml(item.channelTitle)}</div></div>
+      <div class="queue-row${idx === p.index ? ' is-current' : ''}">
+        <span class="queue-idx">${idx === p.index ? '▶' : String(idx + 1).padStart(2, '0')}</span>
+        <button type="button" class="queue-main" data-play="${escapeHtml(item.videoId)}">
+          <span class="queue-thumb"><img loading="lazy" src="${escapeHtml(item.thumbnail || '')}" alt=""></span>
+          <span class="queue-meta">
+            <strong class="queue-title">${escapeHtml(item.title)}</strong>
+            <span class="queue-sub muted">${escapeHtml(item.channelTitle || '')}</span>
+          </span>
         </button>
-        <span class="muted">${idx === p.index ? 'Now' : String(idx + 1).padStart(2, '0')}</span>
-        <button type="button" class="ghost" data-queue-remove="${idx}" aria-label="Remove from queue">×</button>
+        <button type="button" class="queue-remove" data-queue-remove="${idx}" aria-label="Remove">×</button>
       </div>`).join('');
   }
   const dur = document.getElementById('seekDurationLabel');

@@ -376,13 +376,30 @@ async function ensureRemoteCard() {
     const syncEl = document.getElementById('aiSyncToggle');
     if (syncEl) {
       syncEl.addEventListener('change', () => {
-        try { localStorage.setItem('bt_sync_enabled', syncEl.checked ? '1' : '0'); } catch (e) {}
-        // force re-join room or private on next reload path
+        const on = !!syncEl.checked;
+        try { localStorage.setItem('bt_sync_enabled', on ? '1' : '0'); } catch (e) {}
         try {
-          localStorage.removeItem('bt_session_id');
-          localStorage.removeItem('bt_session_id_private');
+          if (!on) {
+            localStorage.removeItem('bt_session_id');
+            // keep private session key for independent listening
+          } else {
+            localStorage.removeItem('bt_session_id_private');
+          }
         } catch (e) {}
-        location.reload();
+        // Soft switch without reload — re-ensure session in background
+        import('/js/session.js').then((mod) => {
+          if (mod.setSyncEnabled) mod.setSyncEnabled(on);
+          if (on && mod.ensureSession) mod.ensureSession().catch(() => {});
+          else if (!on && mod.ensureSession) {
+            // leave shared room: clear in-memory by reload only session module state via private path
+            mod.ensureSession().catch(() => {});
+          }
+        }).catch(() => {});
+        const st = document.getElementById('btSyncStatus');
+        if (st) {
+          st.textContent = on ? 'Sync ON' : 'Sync OFF';
+          st.className = 'bt-sync-status ' + (on ? 'on' : 'off');
+        }
       });
     }
     remoteCardReady = true;
@@ -451,6 +468,26 @@ async function refreshStatus() {
   }
 }
 
+
+/** Decide if message should hit /api/music/ai (player/search/recommend) vs general AI chat */
+function shouldUseMusicEngine(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  // Explicit non-music / meta
+  if (/^(help|hướng dẫn|settings|cài đặt|feedback|góp ý|api key|provider|donate|what can you|bạn làm được)/i.test(t)) return false;
+  // Pure chat / questions without music verbs
+  if (/\?$/.test(t) && !/(nhạc|music|bài|song|phát|play|karaoke|queue|danh sách|hát)/i.test(t)) return false;
+  // Player controls & timers
+  if (/^(next|prev|previous|pause|play|stop|resume|shuffle|repeat|mute|unmute)\b/i.test(t)) return true;
+  if (/^(tiếp|bài tiếp|dừng|tạm dừng|phát|tắt nhạc|xáo|lặp)/i.test(t)) return true;
+  if (/(sleep|hẹn giờ|tắt sau|timer|tới \d|đến \d|until \d)/i.test(t)) return true;
+  if (/(volume|âm lượng)\s*\d/i.test(t)) return true;
+  // Search / recommend / karaoke
+  if (/(play|phát|nghe|mở|tìm|search|find|karaoke|recommend|gợi ý|cho (tôi|toi)|danh sách|playlist|queue|thêm vào)/i.test(t)) return true;
+  if (/(nhạc|music|bài hát|song|album|artist|ca sĩ|bolero|ballad|lofi|chill|v-pop|k-pop)/i.test(t)) return true;
+  return false;
+}
+
 async function sendAI() {
   const text = (aiInput.value || '').trim();
   if (!text) return;
@@ -460,8 +497,8 @@ async function sendAI() {
   appendMsg('user', escapeHtml(text));
   const loading = appendMsg('ai', '…');
   // Prefer music DJ path for almost all chat (except pure settings/help/feedback)
-  const nonMusic = /^(help|hướng dẫn|settings|cài đặt|feedback|góp ý|api key|provider|donate)/i.test(text);
-  const musicLike = !nonMusic;
+  // Route only clear music / player intents to music engine — not every sentence
+  const musicLike = shouldUseMusicEngine(text);
   try {
     if (musicLike) {
       const musicReply = await runMusicAI(text);

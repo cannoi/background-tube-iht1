@@ -193,7 +193,8 @@ export async function joinSession(sid, tok, r, hostId) {
   token = tok || null;
   role = r || 'remote';
   try {
-    localStorage.setItem('bt_sync_enabled', '1');
+    // Only force Sync ON when joining via QR host link
+    if (hostId) localStorage.setItem('bt_sync_enabled', '1');
     localStorage.setItem('bt_session_id', sessionId);
     if (hostId) localStorage.setItem('bt_room_host', hostId);
   } catch (_) {}
@@ -451,7 +452,7 @@ export function tryAutoJoinFromUrl() {
     const host = u.searchParams.get('host');
     if (s) {
       try {
-        localStorage.setItem('bt_sync_enabled', '1');
+        if (host || sync === '1') localStorage.setItem('bt_sync_enabled', '1');
         localStorage.setItem('bt_session_id', s);
         if (host) localStorage.setItem('bt_room_host', host);
       } catch (_) {}

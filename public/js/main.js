@@ -9,7 +9,7 @@ import {
   getPlaylists, createPlaylist, renamePlaylist, deletePlaylist, addToPlaylist,
   isFavorite, toggleFavorite
 } from './library.js';
-import { initUi, render, renderMini, openPlayer, view, toast } from './ui.js';
+import { initUi, render, renderMini, openPlayer, view, toast, updatePlayerChrome } from './ui.js';
 import { initVoiceSearch } from './voice.js';
 import { initRemoteUI } from './remote.js';
 import { ensureSession, notifyLocalAction, publishLocalState, tryAutoJoinFromUrl, onLocalTrackMaybeChanged } from './session.js';
@@ -33,6 +33,7 @@ let lastPublishedTrack = null;
 let lastPublishedPlaying = null;
 onPlayerChange(() => {
   syncPlayerGlobal();
+  try { updatePlayerChrome(); } catch (_) {}
   renderMini();
   const overlay = document.getElementById('playerOverlay');
   if (view.playerOpen && overlay && overlay.classList.contains('open')) {
